@@ -85,9 +85,8 @@ class GR00TPipeline(ComposedPipelineBase):
             ),
         )
 
-        self.add_stage(
-            stage_name="decoding_stage", stage=DecodingStage(vae=self.get_module("vae"))
-        )
+        # GR00T doesn't use VAE decoding since it outputs actions, not images
+        # Skip the decoding stage for robot control
 
 
 EntryClass = GR00TPipeline

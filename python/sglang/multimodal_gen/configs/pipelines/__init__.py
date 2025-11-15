@@ -17,11 +17,13 @@ from sglang.multimodal_gen.configs.pipelines.wan import (
     WanT2V480PConfig,
     WanT2V720PConfig,
 )
+from sglang.multimodal_gen.configs.pipelines.gr00t import GR00TPipelineConfig
 
 __all__ = [
     "HunyuanConfig",
     "FastHunyuanConfig",
     "FluxPipelineConfig",
+    "GR00TPipelineConfig",
     "PipelineConfig",
     "SlidingTileAttnConfig",
     "WanT2V480PConfig",

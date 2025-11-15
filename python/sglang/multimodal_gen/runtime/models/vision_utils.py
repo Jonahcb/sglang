@@ -302,3 +302,35 @@ def resize(
     else:
         raise ValueError(f"resize_mode {resize_mode} is not supported")
     return image
+
+
+def load_robot_state(state_path: str) -> torch.Tensor | dict:
+    """
+    Load robot state data from file.
+
+    Args:
+        state_path: Path to robot state file (.pt, .pth, .npy, or .json)
+
+    Returns:
+        Robot state as tensor or dict
+    """
+    if not os.path.exists(state_path):
+        raise FileNotFoundError(f"Robot state file not found: {state_path}")
+
+    if state_path.endswith(('.pt', '.pth')):
+        return torch.load(state_path, map_location='cpu')
+    elif state_path.endswith('.npy'):
+        return torch.from_numpy(np.load(state_path))
+    elif state_path.endswith('.json'):
+        import json
+        with open(state_path, 'r') as f:
+            data = json.load(f)
+        # Convert numeric values to tensors
+        if isinstance(data, dict):
+            return {k: torch.tensor(v) if isinstance(v, (int, float, list)) else v
+                   for k, v in data.items()}
+        else:
+            return torch.tensor(data)
+    else:
+        raise ValueError(f"Unsupported robot state file format: {state_path}")
+

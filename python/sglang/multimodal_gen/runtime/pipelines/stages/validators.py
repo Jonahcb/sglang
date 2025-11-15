@@ -275,6 +275,17 @@ class StageValidators:
 
         return validator
 
+    @staticmethod
+    def robot_state_valid(value: Any) -> bool:
+        """Check if value is a valid robot state (tensor or dict with state data)."""
+        if value is None:
+            return True
+        if isinstance(value, torch.Tensor):
+            return value.numel() > 0 and not torch.isnan(value).any()
+        if isinstance(value, dict):
+            return len(value) > 0 and all(isinstance(v, (torch.Tensor, int, float)) for v in value.values())
+        return False
+
 
 class ValidationFailure:
     """Details about a specific validation failure."""

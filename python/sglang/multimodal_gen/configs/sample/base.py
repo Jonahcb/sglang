@@ -66,12 +66,26 @@ def _sanitize_filename(name: str, replacement: str = "_", max_length: int = 150)
 class DataType(Enum):
     IMAGE = auto()
     VIDEO = auto()
+    ROBOT_STATE = auto()
+
+    @classmethod
+    def from_string(cls, value: str) -> "DataType":
+        """Convert string to DataType enum."""
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            valid_values = [e.name for e in cls]
+            raise ValueError(f"Invalid DataType: {value}. Valid values: {valid_values}")
 
     def get_default_extension(self) -> str:
         if self == DataType.IMAGE:
             return "jpg"
-        else:
+        elif self == DataType.VIDEO:
             return "mp4"
+        elif self == DataType.ROBOT_STATE:
+            return "pt"
+        else:
+            return "pt"
 
 
 @dataclass
@@ -88,6 +102,10 @@ class SamplingParams:
 
     # Image inputs
     image_path: str | None = None
+
+    # Robot inputs
+    robot_state_path: str | None = None
+    embodiment_id: str | None = None
 
     # Text inputs
     prompt: str | list[str] | None = None
@@ -197,6 +215,9 @@ class SamplingParams:
     def update(self, source_dict: dict[str, Any]) -> None:
         for key, value in source_dict.items():
             if hasattr(self, key):
+                # Special handling for data_type to convert from string
+                if key == "data_type" and isinstance(value, str):
+                    value = DataType.from_string(value)
                 setattr(self, key, value)
             else:
                 logger.exception("%s has no attribute %s", type(self).__name__, key)
@@ -228,6 +249,10 @@ class SamplingParams:
     def add_cli_args(parser: Any) -> Any:
         """Add CLI arguments for SamplingParam fields"""
         parser.add_argument("--data-type", type=str, nargs="+", default=DataType.VIDEO)
+        parser.add_argument("--robot-state-path", type=str, default=None,
+                          help="Path to robot state data file (.pt, .npy, .json)")
+        parser.add_argument("--embodiment-id", type=str, default=None,
+                          help="Robot embodiment ID (e.g., 'thor', 'new_embodiment')")
         parser.add_argument(
             "--num-frames-round-down",
             action="store_true",

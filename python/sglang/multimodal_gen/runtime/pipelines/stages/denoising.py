@@ -19,7 +19,7 @@ import torch.profiler
 from einops import rearrange
 from tqdm.auto import tqdm
 
-from sglang.multimodal_gen.configs.pipelines.base import ModelTaskType, STA_Mode
+from sglang.multimodal_gen.configs.pipelines.base import DataType, ModelTaskType, STA_Mode
 from sglang.multimodal_gen.runtime.distributed import (
     cfg_model_parallel_all_reduce,
     get_local_torch_device,
@@ -496,6 +496,10 @@ class DenoisingStage(PipelineStage):
         batch.latents = self.server_args.pipeline_config.post_denoising_loop(
             latents, batch
         )
+
+        # For GR00T, store final latents as predicted actions
+        if batch.data_type == DataType.ROBOT_STATE:
+            batch.predicted_actions = batch.latents
 
         # Save STA mask search results if needed
         if (
@@ -1036,14 +1040,21 @@ class DenoisingStage(PipelineStage):
         prompt_embeds,
         target_dtype,
         guidance: torch.Tensor,
+        batch=None,
         **kwargs,
     ):
+        # Handle GR00T-specific inputs
+        extra_kwargs = {}
+        if batch and hasattr(batch, 'robot_state_data') and batch.robot_state_data is not None:
+            # For GR00T, pass robot state as additional conditioning
+            extra_kwargs['robot_state'] = batch.robot_state_data
+
         return current_model(
             hidden_states=latent_model_input,
             encoder_hidden_states=prompt_embeds,
             timestep=timestep,
             guidance=guidance,
-            **kwargs,
+            **extra_kwargs,
         )
 
     def _predict_noise_with_cfg(
@@ -1102,6 +1113,7 @@ class DenoisingStage(PipelineStage):
                     ),
                     target_dtype=target_dtype,
                     guidance=guidance,
+                    batch=batch,
                     **image_kwargs,
                     **pos_cond_kwargs,
                 )
@@ -1130,6 +1142,7 @@ class DenoisingStage(PipelineStage):
                     ),
                     target_dtype=target_dtype,
                     guidance=guidance,
+                    batch=batch,
                     **image_kwargs,
                     **neg_cond_kwargs,
                 )

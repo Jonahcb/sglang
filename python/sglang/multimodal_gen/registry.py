@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 from sglang.multimodal_gen.configs.pipelines import (
     FastHunyuanConfig,
     FluxPipelineConfig,
+    GR00TPipelineConfig,
     HunyuanConfig,
     StepVideoT2VConfig,
     WanI2V480PConfig,
@@ -36,6 +37,7 @@ from sglang.multimodal_gen.configs.pipelines.wan import (
     Wan2_2_TI2V_5B_Config,
 )
 from sglang.multimodal_gen.configs.sample.flux import FluxSamplingParams
+from sglang.multimodal_gen.configs.sample.gr00t import GR00TSamplingParams
 from sglang.multimodal_gen.configs.sample.hunyuan import (
     FastHunyuanSamplingParam,
     HunyuanSamplingParams,
@@ -418,6 +420,17 @@ def _register_configs():
         model_path_to_name_mappings={
             "Qwen/Qwen-Image-Edit": "qwen-image-edit",
         },
+    )
+
+    # GR00T
+    register_configs(
+        model_name="gr00t",
+        sampling_param_cls=GR00TSamplingParams,
+        pipeline_config_cls=GR00TPipelineConfig,
+        model_path_to_name_mappings={
+            "NVIDIA/Isaac-GR00T-N1.5": "gr00t",
+        },
+        model_name_detectors=[("gr00t", lambda id: "gr00t" in id.lower())],
     )
 
 

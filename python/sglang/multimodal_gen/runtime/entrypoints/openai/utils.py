@@ -47,6 +47,9 @@ def post_process_sample(
                     fps=fps,
                     format=data_type.get_default_extension(),
                 )
+            elif data_type == DataType.ROBOT_STATE:
+                # Robot state data doesn't produce visual frames - skip saving
+                logger.info("Robot state data processed - no visual output to save")
             else:
                 imageio.imwrite(save_file_path, frames[0])
             logger.info(f"Saved output to {save_file_path}")

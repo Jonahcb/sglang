@@ -92,6 +92,11 @@ class Req:
     pixel_values: torch.Tensor | PIL.Image.Image | None = None
     preprocessed_image: torch.Tensor | None = None
 
+    # Robot inputs
+    robot_state_path: str | None = None
+    robot_state_data: torch.Tensor | dict | None = None
+    embodiment_id: str | None = None
+
     # Text inputs
     prompt: str | list[str] | None = None
     negative_prompt: str | list[str] | None = None

@@ -10,11 +10,15 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 from sglang.multimodal_gen.configs.pipelines import WanI2V480PConfig
-from sglang.multimodal_gen.configs.pipelines.base import ModelTaskType
+from sglang.multimodal_gen.configs.pipelines.base import DataType, ModelTaskType
 from sglang.multimodal_gen.configs.pipelines.qwen_image import (
     QwenImageEditPipelineConfig,
 )
-from sglang.multimodal_gen.runtime.models.vision_utils import load_image, load_video
+from sglang.multimodal_gen.runtime.models.vision_utils import (
+    load_image,
+    load_robot_state,
+    load_video,
+)
 from sglang.multimodal_gen.runtime.pipelines.schedule_batch import Req
 from sglang.multimodal_gen.runtime.pipelines.stages.base import PipelineStage
 from sglang.multimodal_gen.runtime.pipelines.stages.validators import (
@@ -119,6 +123,10 @@ class InputValidationStage(PipelineStage):
                 image = load_image(batch.image_path)
             batch.pil_image = image
 
+        # Load robot data if paths are provided
+        if batch.robot_state_path is not None:
+            batch.robot_state_data = load_robot_state(batch.robot_state_path)
+
         # NOTE: resizing needs to be bring in advance
         if isinstance(server_args.pipeline_config, QwenImageEditPipelineConfig):
             height = None if batch.height_not_provided else batch.height
@@ -202,6 +210,12 @@ class InputValidationStage(PipelineStage):
             batch.guidance_scale,
             lambda x: not batch.do_classifier_free_guidance or V.positive_float(x),
         )
+
+        # Robot data validation
+        if batch.data_type == DataType.ROBOT_STATE:
+            result.add_check("robot_state_data", batch.robot_state_data, V.robot_state_valid)
+            result.add_check("embodiment_id", batch.embodiment_id, V.not_none)
+
         return result
 
     def verify_output(self, batch: Req, server_args: ServerArgs) -> VerificationResult:
