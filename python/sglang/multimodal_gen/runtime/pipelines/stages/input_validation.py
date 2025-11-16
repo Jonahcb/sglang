@@ -10,13 +10,14 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 from sglang.multimodal_gen.configs.pipelines import WanI2V480PConfig
-from sglang.multimodal_gen.configs.pipelines.base import DataType, ModelTaskType
+from sglang.multimodal_gen.configs.pipelines.base import ModelTaskType
+from sglang.multimodal_gen.configs.sample.base import DataType
 from sglang.multimodal_gen.configs.pipelines.qwen_image import (
     QwenImageEditPipelineConfig,
 )
 from sglang.multimodal_gen.runtime.models.vision_utils import (
     load_image,
-    load_robot_state,
+    load_robot_action,
     load_video,
 )
 from sglang.multimodal_gen.runtime.pipelines.schedule_batch import Req
@@ -124,8 +125,8 @@ class InputValidationStage(PipelineStage):
             batch.pil_image = image
 
         # Load robot data if paths are provided
-        if batch.robot_state_path is not None:
-            batch.robot_state_data = load_robot_state(batch.robot_state_path)
+        if batch.robot_action_path is not None:
+            batch.robot_action_data = load_robot_action(batch.robot_action_path)
 
         # NOTE: resizing needs to be bring in advance
         if isinstance(server_args.pipeline_config, QwenImageEditPipelineConfig):
@@ -212,8 +213,8 @@ class InputValidationStage(PipelineStage):
         )
 
         # Robot data validation
-        if batch.data_type == DataType.ROBOT_STATE:
-            result.add_check("robot_state_data", batch.robot_state_data, V.robot_state_valid)
+        if batch.data_type == DataType.ROBOT_ACTION:
+            result.add_check("robot_action_data", batch.robot_action_data, V.robot_action_valid)
             result.add_check("embodiment_id", batch.embodiment_id, V.not_none)
 
         return result

@@ -192,13 +192,13 @@ class DiffGenerator:
                         fps=fps,
                         format=data_type.get_default_extension(),
                     )
-                elif data_type == DataType.ROBOT_STATE:
-                    # For robot state data, save the processed state
-                    if hasattr(batch, 'robot_state_data') and batch.robot_state_data is not None:
-                        torch.save(batch.robot_state_data, save_file_path)
-                        logger.info("Saved robot state to %s", save_file_path)
+                elif data_type == DataType.ROBOT_ACTION:
+                    # For robot action data, save the processed actions
+                    if hasattr(batch, 'processed_actions') and batch.processed_actions is not None:
+                        torch.save(batch.processed_actions, save_file_path)
+                        logger.info("Saved processed actions to %s", save_file_path)
                     else:
-                        logger.warning("No robot state data to save")
+                        logger.warning("No processed actions to save")
                 else:
                     imageio.imwrite(save_file_path, frames[0])
                 logger.info("Saved output to %s", save_file_path)

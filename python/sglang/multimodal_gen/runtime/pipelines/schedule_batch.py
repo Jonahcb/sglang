@@ -93,8 +93,8 @@ class Req:
     preprocessed_image: torch.Tensor | None = None
 
     # Robot inputs
-    robot_state_path: str | None = None
-    robot_state_data: torch.Tensor | dict | None = None
+    robot_action_path: str | None = None
+    robot_action_data: torch.Tensor | list[torch.Tensor] | None = None
     embodiment_id: str | None = None
 
     # Text inputs
@@ -207,6 +207,9 @@ class Req:
 
     # results
     output: torch.Tensor | None = None
+
+    # Robot outputs
+    processed_actions: torch.Tensor | None = None
 
     @property
     def batch_size(self):

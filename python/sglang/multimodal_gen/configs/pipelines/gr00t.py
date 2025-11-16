@@ -32,8 +32,8 @@ def gr00t_postprocess_text(outputs, text_inputs, drop_idx: int = 0):
 class GR00TPipelineConfig(PipelineConfig):
     """Configuration for GR00T robot control pipeline."""
 
+    task_type: ModelTaskType = ModelTaskType.ROBOT_CONTROL
     should_use_guidance: bool = False
-    task_type: ModelTaskType = ModelTaskType.T2V  # We'll repurpose this for robot control
 
     # GR00T-specific configs
     dit_config: DiTConfig = field(default_factory=GR00TConfig)

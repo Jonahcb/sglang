@@ -36,6 +36,7 @@ class ModelTaskType(Enum):
     TI2V = auto()  # Text and Image to Video
     T2I = auto()  # Text to Image
     I2I = auto()  # Image to Image
+    ROBOT_CONTROL = auto()  # Robot Control/Action Processing
 
     def is_image_task(self):
         return self == ModelTaskType.T2I or self == ModelTaskType.I2I
@@ -64,7 +65,7 @@ def postprocess_text(output: BaseEncoderOutput, _text_inputs) -> torch.tensor:
 class PipelineConfig:
     """Base configuration for all pipeline architectures."""
 
-    task_type: ModelTaskType
+    task_type: ModelTaskType = ModelTaskType.T2V
 
     model_path: str = ""
     pipeline_config_path: str | None = None

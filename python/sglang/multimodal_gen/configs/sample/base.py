@@ -66,7 +66,7 @@ def _sanitize_filename(name: str, replacement: str = "_", max_length: int = 150)
 class DataType(Enum):
     IMAGE = auto()
     VIDEO = auto()
-    ROBOT_STATE = auto()
+    ROBOT_ACTION = auto()
 
     @classmethod
     def from_string(cls, value: str) -> "DataType":
@@ -82,7 +82,7 @@ class DataType(Enum):
             return "jpg"
         elif self == DataType.VIDEO:
             return "mp4"
-        elif self == DataType.ROBOT_STATE:
+        elif self == DataType.ROBOT_ACTION:
             return "pt"
         else:
             return "pt"
@@ -104,7 +104,7 @@ class SamplingParams:
     image_path: str | None = None
 
     # Robot inputs
-    robot_state_path: str | None = None
+    robot_action_path: str | None = None
     embodiment_id: str | None = None
 
     # Text inputs
@@ -249,8 +249,8 @@ class SamplingParams:
     def add_cli_args(parser: Any) -> Any:
         """Add CLI arguments for SamplingParam fields"""
         parser.add_argument("--data-type", type=str, nargs="+", default=DataType.VIDEO)
-        parser.add_argument("--robot-state-path", type=str, default=None,
-                          help="Path to robot state data file (.pt, .npy, .json)")
+        parser.add_argument("--robot-action-path", type=str, default=None,
+                          help="Path to robot action tensor file (.pt, .npy, .json)")
         parser.add_argument("--embodiment-id", type=str, default=None,
                           help="Robot embodiment ID (e.g., 'thor', 'new_embodiment')")
         parser.add_argument(

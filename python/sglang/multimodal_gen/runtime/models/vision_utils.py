@@ -304,33 +304,42 @@ def resize(
     return image
 
 
-def load_robot_state(state_path: str) -> torch.Tensor | dict:
+def load_robot_action(action_path: str) -> torch.Tensor | list[torch.Tensor]:
     """
-    Load robot state data from file.
+    Load robot action data from file.
 
     Args:
-        state_path: Path to robot state file (.pt, .pth, .npy, or .json)
+        action_path: Path to robot action file (.pt, .pth, .npy, or .json)
 
     Returns:
-        Robot state as tensor or dict
+        Robot action as tensor or list of tensors
     """
-    if not os.path.exists(state_path):
-        raise FileNotFoundError(f"Robot state file not found: {state_path}")
+    if not os.path.exists(action_path):
+        raise FileNotFoundError(f"Robot action file not found: {action_path}")
 
-    if state_path.endswith(('.pt', '.pth')):
-        return torch.load(state_path, map_location='cpu')
-    elif state_path.endswith('.npy'):
-        return torch.from_numpy(np.load(state_path))
-    elif state_path.endswith('.json'):
+    if action_path.endswith(('.pt', '.pth')):
+        data = torch.load(action_path, map_location='cpu')
+        # Handle both single tensor and list formats
+        if isinstance(data, list):
+            return [torch.tensor(item) if not isinstance(item, torch.Tensor) else item
+                   for item in data]
+        return data
+    elif action_path.endswith('.npy'):
+        data = np.load(action_path)
+        if data.ndim == 2:
+            # Multiple actions
+            return [torch.from_numpy(data[i]) for i in range(data.shape[0])]
+        else:
+            # Single action
+            return torch.from_numpy(data)
+    elif action_path.endswith('.json'):
         import json
-        with open(state_path, 'r') as f:
+        with open(action_path, 'r') as f:
             data = json.load(f)
-        # Convert numeric values to tensors
-        if isinstance(data, dict):
-            return {k: torch.tensor(v) if isinstance(v, (int, float, list)) else v
-                   for k, v in data.items()}
+        if isinstance(data, list):
+            return [torch.tensor(item) for item in data]
         else:
             return torch.tensor(data)
     else:
-        raise ValueError(f"Unsupported robot state file format: {state_path}")
+        raise ValueError(f"Unsupported robot action file format: {action_path}")
 

@@ -239,6 +239,10 @@ def verify_model_config_and_directory(model_path: str) -> dict[str, Any]:
             "Only HuggingFace diffusers format is supported."
         )
 
+    # Load the config first
+    with open(config_path) as f:
+        config = json.load(f)
+
     # Check for transformer and vae directories
     transformer_dir = os.path.join(model_path, "transformer")
     vae_dir = os.path.join(model_path, "vae")
@@ -248,14 +252,12 @@ def verify_model_config_and_directory(model_path: str) -> dict[str, Any]:
             f"Model directory {model_path} does not contain a transformer/ directory."
         )
 
-    if not os.path.exists(vae_dir):
+    # For GR00T, VAE is optional since it doesn't generate images
+    is_gr00t = config.get("_class_name") == "GR00TPipeline"
+    if not is_gr00t and not os.path.exists(vae_dir):
         raise ValueError(
             f"Model directory {model_path} does not contain a vae/ directory."
         )
-
-    # Load the config
-    with open(config_path) as f:
-        config = json.load(f)
 
     # Verify diffusers version exists
     if "_diffusers_version" not in config:

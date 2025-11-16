@@ -429,6 +429,9 @@ def _register_configs():
         pipeline_config_cls=GR00TPipelineConfig,
         model_path_to_name_mappings={
             "NVIDIA/Isaac-GR00T-N1.5": "gr00t",
+            "nvidia/GR00T-N1.5-3B": "gr00t",
+            "/data/work/sglang/gr00t_model": "gr00t",
+            "gr00t": "gr00t",
         },
         model_name_detectors=[("gr00t", lambda id: "gr00t" in id.lower())],
     )

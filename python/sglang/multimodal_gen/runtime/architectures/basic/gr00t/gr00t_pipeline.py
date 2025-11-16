@@ -30,13 +30,17 @@ class GR00TPipeline(ComposedPipelineBase):
     pipeline_name = "GR00TPipeline"
 
     _required_config_modules = [
+        "transformer",
+        "scheduler",
+    ]
+
+    # Optional modules for GR00T
+    _optional_config_modules = [
         "text_encoder",
         "text_encoder_2",
         "tokenizer",
         "tokenizer_2",
         "vae",
-        "transformer",
-        "scheduler",
     ]
 
     def create_pipeline_stages(self, server_args: ServerArgs):
@@ -48,19 +52,33 @@ class GR00TPipeline(ComposedPipelineBase):
         )
 
         # TODO: Do we overload functions that this stage calls?
-        self.add_stage(
-            stage_name="prompt_encoding_stage_primary",
-            stage=TextEncodingStage(
-                text_encoders=[
-                    self.get_module("text_encoder"),
-                    self.get_module("text_encoder_2"),
-                ],
-                tokenizers=[
-                    self.get_module("tokenizer"),
-                    self.get_module("tokenizer_2"),
-                ],
-            ),
-        )
+        # For GR00T, text encoding is optional since we work with action tensors
+        text_encoders = []
+        tokenizers = []
+
+        if "text_encoder" in self.modules:
+            text_encoders.append(self.get_module("text_encoder"))
+        if "text_encoder_2" in self.modules and self.modules["text_encoder_2"] is not None:
+            text_encoders.append(self.get_module("text_encoder_2"))
+
+        if "tokenizer" in self.modules:
+            tokenizers.append(self.get_module("tokenizer"))
+        if "tokenizer_2" in self.modules and self.modules["tokenizer_2"] is not None:
+            tokenizers.append(self.get_module("tokenizer_2"))
+
+        # Only add text encoding stage if we have both encoders and tokenizers
+        if text_encoders and tokenizers:
+            self.add_stage(
+                stage_name="prompt_encoding_stage_primary",
+                stage=TextEncodingStage(
+                    text_encoders=text_encoders,
+                    tokenizers=tokenizers,
+                ),
+            )
+        else:
+            # For GR00T, we can skip text encoding if no models are available
+            # The action tensor processing will happen in the denoising stage
+            pass
         # TODO: What is conditioning in our case?
         self.add_stage(stage_name="conditioning_stage", stage=ConditioningStage())
 

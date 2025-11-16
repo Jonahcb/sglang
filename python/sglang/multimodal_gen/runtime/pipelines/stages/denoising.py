@@ -19,7 +19,8 @@ import torch.profiler
 from einops import rearrange
 from tqdm.auto import tqdm
 
-from sglang.multimodal_gen.configs.pipelines.base import DataType, ModelTaskType, STA_Mode
+from sglang.multimodal_gen.configs.pipelines.base import ModelTaskType, STA_Mode
+from sglang.multimodal_gen.configs.sample.base import DataType
 from sglang.multimodal_gen.runtime.distributed import (
     cfg_model_parallel_all_reduce,
     get_local_torch_device,
@@ -497,9 +498,9 @@ class DenoisingStage(PipelineStage):
             latents, batch
         )
 
-        # For GR00T, store final latents as predicted actions
-        if batch.data_type == DataType.ROBOT_STATE:
-            batch.predicted_actions = batch.latents
+        # For GR00T, store processed actions
+        if batch.data_type == DataType.ROBOT_ACTION:
+            batch.processed_actions = batch.latents
 
         # Save STA mask search results if needed
         if (
@@ -1045,9 +1046,19 @@ class DenoisingStage(PipelineStage):
     ):
         # Handle GR00T-specific inputs
         extra_kwargs = {}
-        if batch and hasattr(batch, 'robot_state_data') and batch.robot_state_data is not None:
-            # For GR00T, pass robot state as additional conditioning
-            extra_kwargs['robot_state'] = batch.robot_state_data
+
+        # For GR00T, handle case where text encoding was skipped
+        if prompt_embeds is None or (hasattr(prompt_embeds, 'numel') and prompt_embeds.numel() == 0):
+            # Create dummy embeddings for GR00T when text encoding is skipped
+            batch_size = latent_model_input.shape[0]
+            hidden_size = 768  # Typical hidden size, should match model config
+            device = latent_model_input.device
+            dtype = latent_model_input.dtype
+            prompt_embeds = torch.zeros(batch_size, 1, hidden_size, device=device, dtype=dtype)
+
+        if batch and hasattr(batch, 'robot_action_data') and batch.robot_action_data is not None:
+            # For GR00T, pass robot action as conditioning
+            extra_kwargs['robot_action'] = batch.robot_action_data
 
         return current_model(
             hidden_states=latent_model_input,
