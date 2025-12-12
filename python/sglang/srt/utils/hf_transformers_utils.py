@@ -56,6 +56,7 @@ from sglang.srt.configs import (
     Qwen3NextConfig,
     Step3VLConfig,
 )
+from sglang.srt.models.gr00t import GR00T_N1_5_Config
 from sglang.srt.configs.deepseek_ocr import DeepseekVLV2Config
 from sglang.srt.configs.internvl import InternVLChatConfig
 from sglang.srt.connector import create_remote_connector
@@ -67,6 +68,7 @@ _CONFIG_REGISTRY: List[Type[PretrainedConfig]] = [
     DbrxConfig,
     ExaoneConfig,
     DeepseekVL2Config,
+    GR00T_N1_5_Config,
     MultiModalityConfig,
     KimiVLConfig,
     InternVLChatConfig,
