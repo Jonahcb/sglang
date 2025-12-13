@@ -20,11 +20,15 @@ Reference: https://github.com/NVIDIA/Isaac-GR00T
 
 from dataclasses import dataclass, field
 from typing import Iterable, Tuple
+import os
+import logging
 
 import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel, PretrainedConfig
 from transformers.feature_extraction_utils import BatchFeature
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -40,11 +44,15 @@ N_COLOR_CHANNELS = 3
 class GR00T_N1_5_Config(PretrainedConfig):
     model_type = "gr00t_n1_5"
 
-    backbone_cfg: dict = field(init=False, metadata={"help": "Backbone configuration."})
-    action_head_cfg: dict = field(init=False, metadata={"help": "Action head configuration."})
-    action_horizon: int = field(init=False, metadata={"help": "Action horizon."})
-    action_dim: int = field(init=False, metadata={"help": "Action dimension."})
-    hidden_size: int = field(init=False, metadata={"help": "Hidden size."})
+    backbone_cfg: dict = field(default_factory=dict, metadata={"help": "Backbone configuration."})
+    action_head_cfg: dict = field(default_factory=lambda: {
+        "action_dim": 32,
+        "action_horizon": 16,
+        "hidden_size": 1024,
+    }, metadata={"help": "Action head configuration."})
+    action_horizon: int = field(default=16, metadata={"help": "Action horizon."})
+    action_dim: int = field(default=32, metadata={"help": "Action dimension."})
+    hidden_size: int = field(default=1024, metadata={"help": "Hidden size."})
     model_dtype: str = field(default="float32", metadata={"help": "Model dtype."})
     torch_dtype: str = field(default="bfloat16", metadata={"help": "Torch dtype."})
 
@@ -57,28 +65,35 @@ class GR00T_N1_5_Config(PretrainedConfig):
     def text_config(self):
         """Get the text config from the Eagle backbone."""
         from sglang.srt.utils.hf_transformers_utils import get_config
-        import os
 
-        eagle_path = self.backbone_cfg.get("eagle_path")
-
-        # HACK: Override the custom eagle_path with a publicly available checkpoint
-        if eagle_path == "NVEagle/eagle_er-qwen3_1_7B-Siglip2_400M_stage1_5_128gpu_er_v7_1mlp_nops":
-            eagle_path = "NVIDIA/Eagle2.5-8B"  # Use publicly available Eagle checkpoint
-
-        if eagle_path:
-            # Pass token if available
-            kwargs = {"trust_remote_code": True}
-            token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            if token:
-                kwargs["token"] = token
-
-            eagle_config = get_config(eagle_path, **kwargs)
+        # Load config from the local eagle2_hg_model directory
+        eagle_model_path = "/data/work/sglang/eagle2_hg_model"
+        if os.path.exists(eagle_model_path):
+            # Load config from the local eagle2_hg_model directory
+            eagle_config = get_config(eagle_model_path, trust_remote_code=True)
             return eagle_config.text_config
         else:
-            # Fallback: try to construct from backbone_cfg
-            from sglang.srt.models.eagle2_5_vl import Eagle2_5_VLConfig
-            eagle_config = Eagle2_5_VLConfig(**self.backbone_cfg)
-            return eagle_config.text_config
+            # Fallback to the original logic
+            eagle_path = self.backbone_cfg.get("eagle_path")
+
+            # HACK: Override the custom eagle_path with a publicly available checkpoint
+            if eagle_path == "NVEagle/eagle_er-qwen3_1_7B-Siglip2_400M_stage1_5_128gpu_er_v7_1mlp_nops":
+                eagle_path = "NVIDIA/Eagle2.5-8B"  # Use publicly available Eagle checkpoint
+
+            if eagle_path:
+                # Pass token if available
+                kwargs = {"trust_remote_code": True}
+                token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+                if token:
+                    kwargs["token"] = token
+
+                eagle_config = get_config(eagle_path, **kwargs)
+                return eagle_config.text_config
+            else:
+                # Fallback: try to construct from backbone_cfg
+                from sglang.srt.models.eagle2_5_vl import Eagle2_5_VLConfig
+                eagle_config = Eagle2_5_VLConfig(**self.backbone_cfg)
+                return eagle_config.text_config
 
 
 @dataclass
@@ -87,7 +102,7 @@ class FlowmatchingActionHeadConfig:
     action_dim: int = 32
     action_horizon: int = 16
     add_pos_embed: bool = True
-    backbone_embedding_dim: int = 2048
+    backbone_embedding_dim: int = 2048  # Will be overridden by actual backbone hidden_size
     diffusion_model_cfg: dict = field(default_factory=dict)
     hidden_size: int = 1024
     input_embedding_dim: int = 1536
@@ -189,26 +204,31 @@ class GR00T_N1_5(nn.Module):
         from sglang.srt.models.eagle2_5_vl import Eagle2_5_VLForConditionalGeneration
         from sglang.srt.utils.hf_transformers_utils import get_config
 
-        # Load Eagle backbone config from the specified path
-        eagle_path = config.backbone_cfg.get("eagle_path")
-
-        # HACK: Override the custom eagle_path with a publicly available checkpoint
-        if eagle_path == "NVEagle/eagle_er-qwen3_1_7B-Siglip2_400M_stage1_5_128gpu_er_v7_1mlp_nops":
-            eagle_path = "nvidia/Eagle2-2B"  # Use publicly available Eagle2-2B checkpoint
-
-        if eagle_path:
-            # Pass token if available for config loading
-            config_kwargs = {"trust_remote_code": True}
-            import os
-            token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            if token:
-                config_kwargs["token"] = token
-
-            backbone_config = get_config(eagle_path, **config_kwargs)
+        # Load backbone config from the local eagle2_hg_model directory
+        eagle_model_path = "/data/work/sglang/eagle2_hg_model"
+        if os.path.exists(eagle_model_path):
+            # Load config from the local eagle2_hg_model directory
+            backbone_config = get_config(eagle_model_path, trust_remote_code=True)
         else:
-            # Fallback: try to construct from backbone_cfg (though this may not work)
-            from sglang.srt.models.eagle2_5_vl import Eagle2_5_VLConfig
-            backbone_config = Eagle2_5_VLConfig(**config.backbone_cfg)
+            # Fallback to the original logic
+            eagle_path = config.backbone_cfg.get("eagle_path")
+
+            # HACK: Override the custom eagle_path with a publicly available checkpoint
+            if eagle_path == "NVEagle/eagle_er-qwen3_1_7B-Siglip2_400M_stage1_5_128gpu_er_v7_1mlp_nops":
+                eagle_path = "nvidia/Eagle2-2B"  # Use publicly available Eagle2-2B checkpoint
+
+            if eagle_path:
+                # Pass token if available for config loading
+                config_kwargs = {"trust_remote_code": True}
+                token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+                if token:
+                    config_kwargs["token"] = token
+
+                backbone_config = get_config(eagle_path, **config_kwargs)
+            else:
+                # Fallback: try to construct from backbone_cfg (though this may not work)
+                from sglang.srt.models.eagle2_5_vl import Eagle2_5_VLConfig
+                backbone_config = Eagle2_5_VLConfig(**config.backbone_cfg)
 
         # Only pass the parameters that Eagle model accepts
         eagle_kwargs = {}
@@ -221,6 +241,8 @@ class GR00T_N1_5(nn.Module):
 
         # Initialize action head with flow matching
         action_head_cfg = FlowmatchingActionHeadConfig(**config.action_head_cfg)
+        # Override backbone_embedding_dim to match the actual backbone hidden_size
+        action_head_cfg.backbone_embedding_dim = backbone_config.text_config.hidden_size
         self.action_head = FlowmatchingActionHead(action_head_cfg)
 
         self.action_horizon = config.action_horizon
@@ -235,22 +257,30 @@ class GR00T_N1_5(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
         forward_batch
-    ) -> BatchFeature:
+    ):
         """
-        Forward pass for GR00T model - get action predictions during inference.
+        Forward pass for GR00T model - return action predictions as logits.
         """
         # Get VLM backbone embeddings
-        vlm_hidden_states = self._get_vlm_embeddings(input_ids, positions, forward_batch)
+        hidden_states = self._get_vlm_embeddings(input_ids, positions, forward_batch)
 
+        # Return action predictions as logits
+        return self.compute_logits(hidden_states, forward_batch)
+
+    def compute_logits(self, hidden_states: torch.Tensor, forward_batch):
+        """Return action predictions as logits."""
         # Create backbone outputs in BatchFeature format
         backbone_outputs = BatchFeature({
-            BACKBONE_FEATURE_KEY: vlm_hidden_states,
+            BACKBONE_FEATURE_KEY: hidden_states,
         })
 
         # Get action predictions
         action_outputs = self.action_head.get_action(backbone_outputs)
 
-        return action_outputs
+        # Return action predictions as "logits"
+        # Shape: (batch_size, action_horizon, action_dim)
+        return action_outputs[ACTION_KEY]
+
    # TODO: (Jonahcb) add type checking for ForwardBatch
     def _get_vlm_embeddings(
         self,
@@ -305,8 +335,8 @@ class GR00T_N1_5(nn.Module):
                     except KeyError:
                         continue  # Skip if parameter not found
 
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
-                weight_loader(param, loaded_weight)
+            weight_loader = getattr(param, "weight_loader", default_weight_loader)
+            weight_loader(param, loaded_weight)
 
 
 

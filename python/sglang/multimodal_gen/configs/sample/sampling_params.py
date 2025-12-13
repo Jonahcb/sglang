@@ -66,12 +66,26 @@ def _sanitize_filename(name: str, replacement: str = "_", max_length: int = 150)
 class DataType(Enum):
     IMAGE = auto()
     VIDEO = auto()
+    ROBOT_ACTION = auto()
+
+    @classmethod
+    def from_string(cls, value: str):
+        """Convert string to DataType enum."""
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            valid_values = [e.name for e in cls]
+            raise ValueError(f"Invalid DataType: {value}. Valid values: {valid_values}")
 
     def get_default_extension(self) -> str:
         if self == DataType.IMAGE:
             return "jpg"
-        else:
+        elif self == DataType.VIDEO:
             return "mp4"
+        elif self == DataType.ROBOT_ACTION:
+            return "pt"
+        else:
+            return "pt"
 
 
 @dataclass
@@ -81,6 +95,10 @@ class SamplingParams:
     """
 
     data_type: DataType = DataType.VIDEO
+
+    # Robot action inputs (for ROBOT_ACTION data type)
+    robot_action_path: str | None = None
+    embodiment_id: str | None = None
 
     request_id: str | None = None
 
@@ -318,6 +336,18 @@ class SamplingParams:
     def add_cli_args(parser: Any) -> Any:
         """Add CLI arguments for SamplingParam fields"""
         parser.add_argument("--data-type", type=str, nargs="+", default=DataType.VIDEO)
+        parser.add_argument(
+            "--robot-action-path",
+            type=str,
+            default=None,
+            help="Path to robot action tensor file (for ROBOT_ACTION data type)",
+        )
+        parser.add_argument(
+            "--embodiment-id",
+            type=str,
+            default=None,
+            help="Robot embodiment identifier (for ROBOT_ACTION data type)",
+        )
         parser.add_argument(
             "--num-frames-round-down",
             action="store_true",
@@ -561,7 +591,19 @@ class SamplingParams:
         attrs = [attr.name for attr in dataclasses.fields(cls)]
         args.height_not_provided = False
         args.width_not_provided = False
-        return {attr: getattr(args, attr) for attr in attrs}
+
+        result = {attr: getattr(args, attr) for attr in attrs}
+
+        # Special handling for data_type conversion from string/list to enum
+        if hasattr(args, 'data_type') and args.data_type is not None:
+            if isinstance(args.data_type, list):
+                # Take the first element if it's a list
+                data_type_str = args.data_type[0] if args.data_type else 'VIDEO'
+            else:
+                data_type_str = args.data_type
+            result['data_type'] = DataType.from_string(data_type_str)
+
+        return result
 
     def output_file_path(self):
         return os.path.join(self.output_path, self.output_file_name)
