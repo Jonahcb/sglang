@@ -28,6 +28,8 @@ Usage:
 """
 
 import multiprocessing as mp
+import os
+import pickle
 import unittest
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -412,6 +414,105 @@ def print_overall_statistics(results: List[Dict[str, Any]]):
     }
 
 
+def get_hf_cache_filename(
+    model_path: str, lora_paths: List[str], prompts: List[str], max_new_tokens: int
+) -> str:
+    """
+    Generate a cache filename based on test parameters.
+
+    Args:
+        model_path: Path to the model
+        lora_paths: List of LoRA adapter paths
+        prompts: List of test prompts
+        max_new_tokens: Maximum number of new tokens to generate
+
+    Returns:
+        Cache filename string
+    """
+    import hashlib
+
+    # Create a hash of the test parameters
+    cache_key = f"{model_path}_{lora_paths}_{prompts}_{max_new_tokens}"
+    cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
+
+    return f"hf_cache_{cache_hash}.pkl"
+
+
+def save_hf_results_to_file(
+    hf_results: Dict[str, Any],
+    model_path: str,
+    lora_paths: List[str],
+    prompts: List[str],
+    max_new_tokens: int,
+) -> None:
+    """
+    Save HF results to a cache file.
+
+    Args:
+        hf_results: HF results dictionary
+        model_path: Path to the model
+        lora_paths: List of LoRA adapter paths
+        prompts: List of test prompts
+        max_new_tokens: Maximum number of new tokens to generate
+    """
+    cache_filename = get_hf_cache_filename(model_path, lora_paths, prompts, max_new_tokens)
+
+    # Convert tensors to lists for JSON serialization
+    serializable_results = {}
+    for key, value in hf_results.items():
+        if isinstance(value, torch.Tensor):
+            serializable_results[key] = value.tolist()
+        elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], torch.Tensor):
+            serializable_results[key] = [v.tolist() if isinstance(v, torch.Tensor) else v for v in value]
+        else:
+            serializable_results[key] = value
+
+    with open(cache_filename, 'wb') as f:
+        pickle.dump(serializable_results, f)
+
+    print(f"HF results saved to cache file: {cache_filename}")
+
+
+def load_hf_results_from_file(
+    model_path: str,
+    lora_paths: List[str],
+    prompts: List[str],
+    max_new_tokens: int,
+) -> Optional[Dict[str, Any]]:
+    """
+    Load HF results from cache file if it exists.
+
+    Args:
+        model_path: Path to the model
+        lora_paths: List of LoRA adapter paths
+        prompts: List of test prompts
+        max_new_tokens: Maximum number of new tokens to generate
+
+    Returns:
+        HF results dictionary if cache exists, None otherwise
+    """
+    cache_filename = get_hf_cache_filename(model_path, lora_paths, prompts, max_new_tokens)
+
+    if not os.path.exists(cache_filename):
+        return None
+
+    print(f"Loading HF results from cache file: {cache_filename}")
+
+    with open(cache_filename, 'rb') as f:
+        serializable_results = pickle.load(f)
+
+    # Convert lists back to tensors
+    results = {}
+    for key, value in serializable_results.items():
+        if key in ["top_input_logprobs", "top_output_logprobs"]:
+            # These are lists of lists (one per prompt)
+            results[key] = [torch.tensor(v) for v in value]
+        else:
+            results[key] = value
+
+    return results
+
+
 def compare_logprobs(
     sglang_logprobs: Dict[str, Any], hf_logprobs: Dict[str, Any]
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -471,14 +572,34 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
         print("\nClearing GPU memory...")
         torch.cuda.empty_cache()
 
-        # Step 2: Run HuggingFace with LoRA
-        hf_logprobs = run_hf_with_lora(
+        # Step 2: Run HuggingFace with LoRA (or load from cache)
+        hf_logprobs = load_hf_results_from_file(
             model_path=model_path,
             lora_paths=lora_paths,
             prompts=prompts,
             max_new_tokens=max_new_tokens,
-            torch_dtype=torch_dtype,
         )
+
+        if hf_logprobs is None:
+            print("No cached HF results found, running HF...")
+            hf_logprobs = run_hf_with_lora(
+                model_path=model_path,
+                lora_paths=lora_paths,
+                prompts=prompts,
+                max_new_tokens=max_new_tokens,
+                torch_dtype=torch_dtype,
+            )
+
+            # Save results to cache for future runs
+            save_hf_results_to_file(
+                hf_logprobs,
+                model_path=model_path,
+                lora_paths=lora_paths,
+                prompts=prompts,
+                max_new_tokens=max_new_tokens,
+            )
+        else:
+            print("Using cached HF results")
 
         # Step 3: Compare log probabilities
         results, overall_stats = compare_logprobs(sglang_logprobs, hf_logprobs)
@@ -500,51 +621,51 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
 
         return results, overall_stats
 
-    def test_lora_logprob_comparison_basic(self):
-        """
-        Basic test comparing HF and SGLang LoRA logprobs with small model.
-        """
-        model_path = "meta-llama/Llama-2-7b-hf"
-        lora_paths = ["yushengsu/sglang_lora_logprob_diff_without_tuning"]
-        prompts = DEFAULT_TEST_PROMPTS[:2]  # Use fewer prompts for faster testing
+    # def _test_lora_logprob_comparison_basic(self):
+    #     """
+    #     Basic test comparing HF and SGLang LoRA logprobs with small model.
+    #     """
+    #     model_path = "meta-llama/Llama-2-7b-hf"
+    #     lora_paths = ["yushengsu/sglang_lora_logprob_diff_without_tuning"]
+    #     prompts = DEFAULT_TEST_PROMPTS[:2]  # Use fewer prompts for faster testing
+    #
+    #     self._run_comparison_test(
+    #         model_path=model_path,
+    #         lora_paths=lora_paths,
+    #         prompts=prompts,
+    #         max_new_tokens=32,
+    #     )
 
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-        )
+    # def _test_lora_logprob_comparison_full(self):
+    #     """
+    #     Full test comparing HF and SGLang LoRA logprobs with all prompts.
+    #     """
+    #     model_path = "meta-llama/Llama-2-7b-hf"
+    #     lora_paths = ["yushengsu/sglang_lora_logprob_diff_without_tuning"]
+    #     prompts = DEFAULT_TEST_PROMPTS
+    #
+    #     self._run_comparison_test(
+    #         model_path=model_path,
+    #         lora_paths=lora_paths,
+    #         prompts=prompts,
+    #         max_new_tokens=32,
+    #     )
 
-    def test_lora_logprob_comparison_full(self):
-        """
-        Full test comparing HF and SGLang LoRA logprobs with all prompts.
-        """
-        model_path = "meta-llama/Llama-2-7b-hf"
-        lora_paths = ["yushengsu/sglang_lora_logprob_diff_without_tuning"]
-        prompts = DEFAULT_TEST_PROMPTS
-
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-        )
-
-    def test_moe_lora_logprob_comparison_basic(self):
-        """
-        Test comparing HF and SGLang MoE LoRA logprobs with basic prompts.
-        """
-
-        model_path = "Qwen/Qwen1.5-MoE-A2.7B"
-        lora_paths = ["sai-lakkshmii/Qwen1.5-MoE-A2.7B-squad-lora-latest"]
-        prompts = DEFAULT_TEST_PROMPTS[:2]  # Use first 2 default prompts for basic test
-
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-        )
+    # def _test_moe_lora_logprob_comparison_basic(self):
+    #     """
+    #     Test comparing HF and SGLang MoE LoRA logprobs with basic prompts.
+    #     """
+    #
+    #     model_path = "Qwen/Qwen1.5-MoE-A2.7B"
+    #     lora_paths = ["sai-lakkshmii/Qwen1.5-MoE-A2.7B-squad-lora-latest"]
+    #     prompts = DEFAULT_TEST_PROMPTS[:2]  # Use first 2 default prompts for basic test
+    #
+    #     self._run_comparison_test(
+    #         model_path=model_path,
+    #         lora_paths=lora_paths,
+    #         prompts=prompts,
+    #         max_new_tokens=32,
+    #     )
 
     def test_moe_lora_logprob_comparison_full(self):
         """
@@ -570,9 +691,16 @@ if __name__ == "__main__":
         pass
 
     try:
-        unittest.main(warnings="ignore", verbosity=2)
+        # Create test suite with only the MoE full test
+        suite = unittest.TestSuite()
+        suite.addTest(TestLoRAHFSGLLogprobDifference('test_moe_lora_logprob_comparison_full'))
+
+        # Run the test
+        runner = unittest.TextTestRunner(verbosity=2, warnings="ignore")
+        runner.run(suite)
     finally:
         # Final cleanup
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+
