@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
 from torch.nn import functional as F
 
-from sglang.srt.layers.activation import GeluAndMul, SiluAndMul
-
 
 @dataclass
 class TorchNativeRunnerInput(RunnerInput):
@@ -63,6 +61,14 @@ class TorchNativeRunnerCore(MoeRunnerCore):
 
     def __init__(self, config: MoeRunnerConfig):
         super().__init__(config)
+        from sglang.srt.layers.activation import GeluAndMul, SiluAndMul
+
+        if config.activation == "silu":
+            self.act = SiluAndMul()
+        elif config.activation == "gelu":
+            self.act = GeluAndMul()
+        else:
+            raise ValueError(f"Unsupported activation: {config.activation=}")
 
     def run(
         self,
@@ -77,7 +83,7 @@ class TorchNativeRunnerCore(MoeRunnerCore):
             tokens_per_expert=runner_input.tokens_per_expert,
             topk_weights=runner_input.topk_weights,
             topk_ids=runner_input.topk_ids,
-            activation=self.config.activation,
+            act=self.act,
             w13_weight=quant_info.w13_weight,
             w2_weight=quant_info.w2_weight,
             idxs=runner_input.idxs,
@@ -202,18 +208,11 @@ def moe_forward_native(
     tokens_per_expert: torch.Tensor,
     topk_weights: torch.Tensor,
     topk_ids: torch.Tensor,
-    activation: str,
+    act: torch.nn.Module,
     w13_weight: torch.Tensor,
     w2_weight: torch.Tensor,
     idxs: torch.Tensor,
 ) -> torch.Tensor:
-
-    if activation == "silu":
-        act = SiluAndMul()
-    elif activation == "gelu":
-        act = GeluAndMul()
-    else:
-        raise ValueError(f"Unsupported activation: {activation=}")
 
     outputs = []
     start_idx = 0
