@@ -145,6 +145,7 @@ def run_test(tp_size, batch_size, model_config, check=False):
     )
     dispatch_output = StandardDispatchOutput(
         hidden_states=x,
+        hidden_states_scale=None,
         topk_output=topk_output,
     )
 
