@@ -55,9 +55,7 @@ from sglang.srt.layers.moe.cutlass_utils import (
 @dataclass
 class CutlassRunnerInput(RunnerInput):
     gate_up_input: torch.Tensor
-    topk_ids: torch.Tensor
     # Standard mode fields
-    topk_weights: Optional[torch.Tensor] = None
     a_map: Optional[torch.Tensor] = None
     rep_aux: Optional[torch.Tensor] = None
     # DeepEP mode fields
