@@ -124,7 +124,7 @@ class CutlassRunnerCore(MoeRunnerCore):
                 w2_q=quant_info.w2_weight,
                 w1_scale=quant_info.w13_scale,
                 w2_scale=quant_info.w2_scale,
-                topk_ids=runner_input.topk_ids,
+                topk_ids=running_state["topk_ids"],
                 params=quant_info.params,
                 a1_scale=quant_info.w13_input_scale,
                 a2_scale=quant_info.w2_input_scale,
@@ -144,7 +144,7 @@ class CutlassRunnerCore(MoeRunnerCore):
                 w2_q=quant_info.w2_weight,
                 w1_scale=quant_info.w13_scale,
                 w2_scale=quant_info.w2_scale,
-                topk_ids=runner_input.topk_ids,
+                topk_ids=running_state["topk_ids"],
                 params=quant_info.params,
                 rep_a1_scales=runner_input.rep_aux,
                 use_mxfp8=quant_info.use_mxfp8,
@@ -164,13 +164,9 @@ class CutlassRunnerCore(MoeRunnerCore):
                 w2_fp4=quant_info.w2_weight,
                 w2_blockscale=quant_info.w2_blockscale,
                 w2_alphas=quant_info.w2_alpha,
-                topk_ids=runner_input.topk_ids,
+                topk_ids=running_state["topk_ids"],
                 params=quant_info.params,
             )
-
-        # Store combination info for post_permute function
-        running_state["topk_weights"] = runner_input.topk_weights
-        running_state["topk_ids"] = runner_input.topk_ids
 
         return CutlassRunnerOutput(hidden_states=down_output)
 
@@ -211,6 +207,9 @@ def pre_permute_standard_to_cutlass(
 
     a_map = torch.empty((topk_ids.numel()), dtype=torch.int32, device=device)
     c_map = torch.empty((topk_ids.numel()), dtype=torch.int32, device=device)
+
+    running_state["topk_weights"] = topk_weights
+    running_state["topk_ids"] = topk_ids
 
     if quant_info.params.quant_type == CutlassMoEQuantType.BlockscaledFP8:
         # Extract variables from quant_info
@@ -338,9 +337,7 @@ def pre_permute_standard_to_cutlass(
         running_state["c_map"] = c_map
 
         return CutlassRunnerInput(
-            gate_up_input=rep_a_q,
-            topk_weights=topk_weights,
-            topk_ids=topk_ids,
+            gate_up_input=gateup_input,
             a_map=a_map,
             rep_aux=rep_aux,
         )
@@ -452,8 +449,6 @@ def pre_permute_standard_to_cutlass(
 
         src2dst = cutlass_w4_run_moe_ep_preproess(topk_ids)
         running_state["src2dst"] = src2dst
-        running_state["topk_ids"] = topk_ids
-        running_state["topk_weights"] = topk_weights
 
         gateup_input = torch.empty(
             (m * topk, k),
@@ -495,8 +490,6 @@ def pre_permute_standard_to_cutlass(
 
     return CutlassRunnerInput(
         gate_up_input=gateup_input,
-        topk_weights=topk_weights,
-        topk_ids=topk_ids,
         a_map=a_map,
         rep_aux=rep_aux,
     )
@@ -654,6 +647,7 @@ def pre_permute_deepep_ll_to_cutlass(
 
     # Store for post_permute
     running_state["topk_weights"] = topk_weights
+    running_state["topk_ids"] = topk_ids
 
     num_experts = quant_info.w13_weight.size(0)
     k = quant_info.w13_weight.size(2) * 2  # w1_q is transposed and packed
@@ -681,7 +675,6 @@ def pre_permute_deepep_ll_to_cutlass(
 
     return CutlassRunnerInput(
         gate_up_input=gateup_input,
-        topk_ids=topk_ids,
         masked_m=masked_m,
         expected_m=expected_m,
     )
@@ -755,6 +748,7 @@ def pre_permute_deepep_normal_to_cutlass(
 
     # Store state for post_permute
     running_state["topk_weights"] = topk_weights
+    running_state["topk_ids"] = topk_ids_
 
     num_experts = quant_info.w13_weight.size(0)
     k = quant_info.w13_weight.size(2) * 2  # w1_q is transposed and packed
@@ -820,8 +814,6 @@ def pre_permute_deepep_normal_to_cutlass(
 
     return CutlassRunnerInput(
         gate_up_input=gateup_input,
-        topk_ids=topk_ids_,
-        topk_weights=topk_weights,
         a_map=a_map,
     )
 
