@@ -5,7 +5,11 @@ import triton  # Added import
 import triton.testing  # Added import
 from transformers import AutoConfig
 
-from sglang.srt.layers.moe.cutlass_moe_params import CutlassMoEType
+from sglang.srt.layers.moe.cutlass_moe_params import (
+    CutlassMoEParams,
+    CutlassMoEQuantType,
+    CutlassMoEType,
+)
 from sglang.srt.layers.moe.moe_runner.base import MoeRunnerConfig
 from sglang.srt.layers.moe.moe_runner.cutlass import CutlassMoeQuantInfo
 from sglang.srt.layers.moe.moe_runner.runner import MoeRunner
@@ -115,23 +119,13 @@ def run_test(tp_size, batch_size, model_config, check=False):
     topk_ids = torch.randint(0, E, (batch_size, topk), dtype=torch.int32, device="cuda")
     router_logits = torch.randn((batch_size, E), device="cuda", dtype=dtype)
 
-    a1_strides = torch.full((E,), H, dtype=torch.int64, device="cuda")
-    c1_strides = torch.full((E,), I, dtype=torch.int64, device="cuda")
-    a2_strides = torch.full((E,), I // 2, dtype=torch.int64, device="cuda")
-    c2_strides = torch.full((E,), H, dtype=torch.int64, device="cuda")
-
-    workspace = torch.empty(
-        (7182 * 1024), device="cuda", dtype=torch.uint8
-    )  # Allocate sufficient workspace
-    # Pointer arrays (often filled by the kernel or a prep step, but needed as args)
-    a_ptrs = torch.empty((E,), dtype=torch.int64, device="cuda")
-    b_ptrs = torch.empty((E,), dtype=torch.int64, device="cuda")
-    out_ptrs = torch.empty((E,), dtype=torch.int64, device="cuda")
-    a_scales_ptrs = torch.empty((E,), dtype=torch.int64, device="cuda")
-    b_scales_ptrs = torch.empty((E,), dtype=torch.int64, device="cuda")
-    expert_offsets = torch.empty((E + 1,), dtype=torch.int32, device="cuda")
-    problem_sizes1 = torch.empty((E, 3), dtype=torch.int32, device="cuda")
-    problem_sizes2 = torch.empty((E, 3), dtype=torch.int32, device="cuda")
+    cutlass_moe_params = CutlassMoEParams(
+        quant_type=CutlassMoEQuantType.BlockscaledFP8,
+        device=torch.device("cuda"),
+        num_experts=E,
+        intermediate_size_per_partition=I,
+        hidden_size=H,
+    )
 
     # --- Setup for refactored MoeRunner ---
     moe_runner_config = MoeRunnerConfig(
@@ -163,19 +157,7 @@ def run_test(tp_size, batch_size, model_config, check=False):
         w2_weight=w2.transpose(1, 2),
         w13_scale=w1_scale.transpose(1, 2),
         w2_scale=w2_scale.transpose(1, 2),
-        expert_offsets=expert_offsets,
-        problem_sizes1=problem_sizes1,
-        problem_sizes2=problem_sizes2,
-        ab_strides_13=a1_strides,
-        ab_strides_2=a2_strides,
-        c_strides_13=c1_strides,
-        c_strides_2=c2_strides,
-        workspace=workspace,
-        a_ptrs=a_ptrs,
-        b_ptrs=b_ptrs,
-        out_ptrs=out_ptrs,
-        a_scales_ptrs=a_scales_ptrs,
-        b_scales_ptrs=b_scales_ptrs,
+        params=cutlass_moe_params,
     )
 
     # TRITON runner setup
