@@ -16,6 +16,14 @@ from sglang.srt.layers.moe.moe_runner.triton import TritonMoeQuantInfo
 from sglang.srt.layers.moe.token_dispatcher.standard import StandardDispatchOutput
 from sglang.srt.layers.moe.topk import StandardTopKOutput
 from sglang.srt.layers.moe.utils import MoeRunnerBackend
+from sglang.srt.server_args import set_global_server_args_for_scheduler
+
+
+# Create a dummy class to mimic the expected server arguments
+class MockServerArgs:
+    def __init__(self):
+        # Set the specific flag the config builder is looking for
+        self.enable_deterministic_inference = False
 
 
 # Copy from: https://github.com/deepseek-ai/DeepGEMM/blob/main/deep_gemm/utils.py
@@ -122,7 +130,7 @@ def run_test(tp_size, batch_size, model_config, check=False):
         quant_type=CutlassMoEQuantType.BlockscaledFP8,
         device=torch.device("cuda"),
         num_experts=E,
-        intermediate_size_per_partition=I,
+        intermediate_size_per_partition=I // 2,
         hidden_size=H,
     )
 
@@ -237,6 +245,7 @@ def main(tp_size=8, batch_sizes=[1, 4, 8, 16, 32, 64, 128, 256, 512], check=Fals
 
 
 if __name__ == "__main__":
+    set_global_server_args_for_scheduler(MockServerArgs())
     parser = argparse.ArgumentParser()
     parser.add_argument("--tp-size", type=int, default=8, help="Tensor Parallel size")
     parser.add_argument(
