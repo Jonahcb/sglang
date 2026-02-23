@@ -2,8 +2,8 @@ from typing import Optional, Tuple
 
 import torch
 
-from sglang.srt.layers.moe.moe_runner.cutlass_utils import CutlassMoEParams
-from sglang.srt.layers.moe.moe_runner.types import (
+from sglang.srt.layers.moe.cutlass_moe_params import (
+    CutlassMoEParams,
     CutlassMoEType,
 )
 from sglang.srt.utils import is_cuda, is_sm90_supported
