@@ -194,8 +194,6 @@ class CutlassRunnerCore(MoeRunnerCore):
     ) -> torch.Tensor:
         from sglang.srt.layers.moe.ep_moe.kernels import (
             silu_and_mul_masked_post_per_tensor_quant_fwd,
-        )
-        from sglang.srt.layers.moe.ep_moe.kernels import (
             silu_mul_static_tensorwise_quant_for_cutlass_moe,
         )
 
@@ -687,6 +685,7 @@ def pre_permute_standard_to_cutlass(
 
         # FP8-specific asserts
         from sglang.srt.layers.quantization.fp8_utils import cutlass_fp8_supported
+
         if not cutlass_fp8_supported():
             raise RuntimeError("CUTLASS FP8 kernels are not available on this system.")
         assert w1_q.dtype == torch.float8_e4m3fn
@@ -815,7 +814,7 @@ def pre_permute_standard_to_cutlass(
         assert (
             nx2_w1 == quant_info.params.intermediate_size_per_partition * 2
             and half_n_w2 == quant_info.params.intermediate_size_per_partition // 2
-        ), "mismatch in " "expected `n`"
+        ), ("mismatch in " "expected `n`")
         assert 2 * half_k_w1 == k_w2, "Hidden size mismatch w2 and w1"
         assert hidden_states.dtype in [
             torch.half,
@@ -1278,8 +1277,8 @@ def post_permute_cutlass_to_deepep_normal(
     runner_config: MoeRunnerConfig,
     running_state: Dict[str, torch.Tensor],
 ) -> DeepEPNormalCombineInput:
-    from sglang.srt.layers.moe.token_dispatcher.deepep import DeepEPNormalCombineInput
     from sglang.srt.layers.moe.ep_moe.kernels import deepep_post_reorder_triton_kernel
+    from sglang.srt.layers.moe.token_dispatcher.deepep import DeepEPNormalCombineInput
 
     c2 = runner_output.hidden_states
     src2dst = running_state["src2dst"]

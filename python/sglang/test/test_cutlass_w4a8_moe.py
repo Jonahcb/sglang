@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from typing import Optional
 
 import pytest
 import torch
-
-from sglang.srt.layers.moe.topk import TopKConfig, select_experts
+import torch.distributed as dist
 
 import sglang.srt.distributed.parallel_state as PS
 from sglang.srt.distributed.parallel_state import init_world_group
-import os
-import torch.distributed as dist
+from sglang.srt.layers.moe.topk import TopKConfig, select_experts
 
 
 def pack_int4_values_to_int8(int4_values_interleaved: torch.Tensor) -> torch.Tensor:
@@ -58,7 +57,9 @@ def pack_interleave(num_experts, ref_weight, ref_scale, alignment=4):
 @pytest.mark.parametrize("K", [7168])
 @pytest.mark.parametrize("E", [256])
 @pytest.mark.parametrize("tp_size", [8])
-@pytest.mark.parametrize("use_ep_moe", [False]) # TODO test is broken for use_ep_moe=True
+@pytest.mark.parametrize(
+    "use_ep_moe", [False]
+)  # TODO test is broken for use_ep_moe=True
 @pytest.mark.parametrize("topk", [8])
 @pytest.mark.parametrize("group_size", [128])
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
@@ -80,7 +81,6 @@ def test_cutlass_w4a8_moe(M, N, K, E, tp_size, use_ep_moe, topk, group_size, dty
             backend="nccl",
         )
         PS._MOE_EP = PS._MOE_TP = PS._TP
-
 
     if use_ep_moe:
         local_e = E // tp_size
@@ -214,13 +214,16 @@ def cutlass_moe(
     expert_map: Optional[torch.Tensor] = None,
     apply_router_weight_on_input: bool = False,
 ):
-    from sglang.srt.layers.moe.moe_runner.cutlass import CutlassMoeQuantInfo
-    from sglang.srt.layers.moe.token_dispatcher.standard import StandardDispatchOutput
+    from sglang.srt.layers.moe.cutlass_moe_params import (
+        CutlassMoEParams,
+        CutlassMoEQuantType,
+    )
     from sglang.srt.layers.moe.moe_runner.base import MoeRunnerConfig
-    from sglang.srt.layers.moe.cutlass_moe_params import CutlassMoEParams, CutlassMoEQuantType
+    from sglang.srt.layers.moe.moe_runner.cutlass import CutlassMoeQuantInfo
+    from sglang.srt.layers.moe.moe_runner.runner import MoeRunner
+    from sglang.srt.layers.moe.token_dispatcher.standard import StandardDispatchOutput
     from sglang.srt.layers.moe.topk import StandardTopKOutput
     from sglang.srt.layers.moe.utils import MoeRunnerBackend
-    from sglang.srt.layers.moe.moe_runner.runner import MoeRunner
 
     if expert_map is not None:
         topk_ids = expert_map[topk_ids]

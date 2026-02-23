@@ -8,7 +8,6 @@ from transformers import AutoConfig
 from sglang.srt.layers.moe.cutlass_moe_params import (
     CutlassMoEParams,
     CutlassMoEQuantType,
-    CutlassMoEType,
 )
 from sglang.srt.layers.moe.moe_runner.base import MoeRunnerConfig
 from sglang.srt.layers.moe.moe_runner.cutlass import CutlassMoeQuantInfo

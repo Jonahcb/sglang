@@ -21,7 +21,10 @@ from sglang.srt.layers.moe import (
     get_moe_a2a_backend,
     get_moe_runner_backend,
 )
-from sglang.srt.layers.moe.cutlass_moe_params import CutlassMoEParams, CutlassMoEQuantType
+from sglang.srt.layers.moe.cutlass_moe_params import (
+    CutlassMoEParams,
+    CutlassMoEQuantType,
+)
 from sglang.srt.layers.moe.moe_runner.cutlass import CutlassMoeQuantInfo
 from sglang.srt.layers.moe.moe_runner.triton import TritonMoeQuantInfo
 from sglang.srt.layers.moe.utils import should_use_flashinfer_cutlass_moe_fp4_allgather
@@ -1673,9 +1676,7 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                 MoeRunnerBackend.FLASHINFER_TRTLLM, moe_runner_config
             )
         elif get_moe_runner_backend().is_cutlass():
-            self.runner = MoeRunner(
-                MoeRunnerBackend.CUTLASS, moe_runner_config
-            )
+            self.runner = MoeRunner(MoeRunnerBackend.CUTLASS, moe_runner_config)
 
     def apply(
         self,
