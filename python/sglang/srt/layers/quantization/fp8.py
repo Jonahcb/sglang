@@ -1345,8 +1345,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         if moe_runner_backend.is_auto():
             if self.is_deepgemm_moe_runner_backend_enabled():
                 moe_runner_backend = MoeRunnerBackend.DEEP_GEMM
-            elif self.use_cutlass_fused_experts_fp8:
-                moe_runner_backend = MoeRunnerBackend.CUTLASS
             else:
                 moe_runner_backend = MoeRunnerBackend.TRITON
         if (
