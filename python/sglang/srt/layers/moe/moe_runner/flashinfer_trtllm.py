@@ -41,8 +41,6 @@ elif is_cuda_alike():
 else:
     fp4_quantize = None
 
-from sglang.srt.layers.moe.topk import TopKOutputChecker
-
 
 def align_fp8_moe_weights_for_flashinfer_trtllm(
     layer: Module, swap_w13_halves: bool = False
@@ -528,6 +526,7 @@ def fused_experts_none_to_flashinfer_trtllm_bf16(
     assert (
         runner_config.is_gated
     ), "Only gated MoEs are supported for flashinfer trtllm moe"
+    from sglang.srt.layers.moe.topk import TopKOutputChecker
 
     assert TopKOutputChecker.format_is_bypassed(dispatch_output.topk_output)
 
