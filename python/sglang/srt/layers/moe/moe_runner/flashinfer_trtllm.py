@@ -487,17 +487,12 @@ def fused_experts_none_to_flashinfer_trtllm_fp4(
 class FlashInferTrtllmBf16MoeQuantInfo(MoeQuantInfo):
     """Quantization payload consumed by FlashInfer TRT-LLM BF16 MoE kernels."""
 
-    # Shuffled FP4 weights (processed by align_fp4_moe_weights_for_flashinfer_trtllm)
     gemm1_weights: torch.Tensor
     gemm2_weights: torch.Tensor
 
     # Expert-parallel metadata
     global_num_experts: int
     local_expert_offset: int
-    local_num_experts: int
-    intermediate_size_per_partition: int
-
-    routing_method_type: int
 
 
 def fused_experts_none_to_flashinfer_trtllm_bf16(
@@ -531,9 +526,8 @@ def fused_experts_none_to_flashinfer_trtllm_bf16(
     assert TopKOutputChecker.format_is_bypassed(dispatch_output.topk_output)
 
     hidden_states = dispatch_output.hidden_states
-    topk_config = dispatch_output.topk_config
     topk_output = dispatch_output.topk_output
-    routing_method_type = dispatch_output.routing_method_type
+    topk_config = topk_output.topk_config
 
     with use_symmetric_memory(get_tp_group(), disabled=not is_allocation_symmetric()):
 
@@ -548,10 +542,10 @@ def fused_experts_none_to_flashinfer_trtllm_bf16(
             top_k=topk_config.top_k,
             n_group=topk_config.num_expert_group,
             topk_group=topk_config.topk_group,
-            intermediate_size=quant_info.intermediate_size_per_partition,
+            intermediate_size=runner_config.intermediate_size_per_partition,
             local_expert_offset=quant_info.local_expert_offset,
-            local_num_experts=quant_info.local_num_experts,
-            routing_method_type=quant_info.routing_method_type,
+            local_num_experts=runner_config.num_local_experts,
+            routing_method_type=runner_config.routing_method_type,
             routed_scaling_factor=runner_config.routed_scaling_factor,
             tune_max_num_tokens=next_power_of_2(hidden_states.shape[0]),
         )

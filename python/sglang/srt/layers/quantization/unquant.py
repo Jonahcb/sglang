@@ -386,6 +386,18 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
                 tune_max_num_tokens=next_power_of_2(x.shape[0]),
             )[0]
             return StandardCombineInput(hidden_states=output)
+        elif self.use_flashinfer_trtllm_moe:
+            from sglang.srt.layers.moe.moe_runner.flashinfer_trtllm import (
+                FlashInferTrtllmBf16MoeQuantInfo,
+            )
+
+            quant_info = FlashInferTrtllmBf16MoeQuantInfo(
+                gemm1_weights=layer.w13_weight,
+                gemm2_weights=layer.w2_weight,
+                global_num_experts=layer.num_experts,
+                local_expert_offset=layer.moe_ep_rank * layer.num_local_experts,
+            )
+            return self.runner.run(dispatch_output, quant_info)
         else:
             # Skip aiter fused_moe when using non-auto MoE backend (e.g., triton, triton_kernels)
             # because aiter CK kernels don't support all GEMM dimensions
