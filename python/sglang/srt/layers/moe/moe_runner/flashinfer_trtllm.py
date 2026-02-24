@@ -485,7 +485,6 @@ def fused_experts_none_to_flashinfer_trtllm_fp4(
     return StandardCombineInput(hidden_states=result)
 
 
-
 @dataclass
 class FlashInferTrtllmBf16MoeQuantInfo(MoeQuantInfo):
     """Quantization payload consumed by FlashInfer TRT-LLM BF16 MoE kernels."""
@@ -521,7 +520,7 @@ def fused_experts_none_to_flashinfer_trtllm_bf16(
         runner_config.activation == "silu"
     ), "Only silu is supported for flashinfer trtllm moe"
     assert (
-        topk_output.topk_config.renormalize
+        dispatch_output.topk_output.topk_config.renormalize
     ), "Renormalize is required for flashinfer trtllm moe"
     assert (
         runner_config.num_fused_shared_experts == 0
@@ -530,16 +529,14 @@ def fused_experts_none_to_flashinfer_trtllm_bf16(
         runner_config.is_gated
     ), "Only gated MoEs are supported for flashinfer trtllm moe"
 
-    assert TopKOutputChecker.format_is_bypassed(topk_output)
+    assert TopKOutputChecker.format_is_bypassed(dispatch_output.topk_output)
 
     hidden_states = dispatch_output.hidden_states
     topk_config = dispatch_output.topk_config
     topk_output = dispatch_output.topk_output
     routing_method_type = dispatch_output.routing_method_type
 
-    with use_symmetric_memory(
-                get_tp_group(), disabled=not is_allocation_symmetric()
-            ):
+    with use_symmetric_memory(get_tp_group(), disabled=not is_allocation_symmetric()):
 
         # Call the fused kernel
         final_hidden_states = trtllm_bf16_moe(

@@ -325,7 +325,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
         if self.use_flashinfer_trtllm_moe:
             backend = MoeRunnerBackend.FLASHINFER_TRTLLM
         elif self.use_triton_kernels:
-            backend =MoeRunnerBackend.TRITON_KERNELS
+            backend = MoeRunnerBackend.TRITON_KERNELS
         else:
             backend = MoeRunnerBackend.TRITON
         self.runner = MoeRunner(backend, moe_runner_config)

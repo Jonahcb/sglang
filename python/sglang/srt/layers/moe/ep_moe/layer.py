@@ -15,7 +15,6 @@ from sglang.srt.layers.moe import (
     get_moe_runner_backend,
 )
 from sglang.srt.layers.moe.fused_moe_triton.layer import (
-    FlashInferFusedMoE,
     FusedMoE,
     moe_forward_piecewise_cuda_graph_impl,
 )
