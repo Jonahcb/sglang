@@ -1133,21 +1133,21 @@ class FlashInferFusedMoE(FusedMoE):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def forward(self, hidden_states: torch.Tensor, topk_output: TopKOutput):
-        if is_in_piecewise_cuda_graph():
-            if not TopKOutputChecker.format_is_standard(topk_output):
-                # Make sure there is torch lib op registration for the whole moe layer
-                return self.forward_impl(hidden_states, topk_output)
-            else:
-                return moe_forward_piecewise_cuda_graph_impl(
-                    hidden_states,
-                    topk_output.topk_weights,
-                    topk_output.topk_ids,
-                    topk_output.router_logits,
-                    self.layer_id,
-                )
-        else:
-            return self.forward_impl(hidden_states, topk_output)
+    # def forward(self, hidden_states: torch.Tensor, topk_output: TopKOutput):
+    #     if is_in_piecewise_cuda_graph():
+    #         if not TopKOutputChecker.format_is_standard(topk_output):
+    #             # Make sure there is torch lib op registration for the whole moe layer
+    #             return self.forward_impl(hidden_states, topk_output)
+    #         else:
+    #             return moe_forward_piecewise_cuda_graph_impl(
+    #                 hidden_states,
+    #                 topk_output.topk_weights,
+    #                 topk_output.topk_ids,
+    #                 topk_output.router_logits,
+    #                 self.layer_id,
+    #             )
+    #     else:
+    #         return self.forward_impl(hidden_states, topk_output)
 
     def forward_impl(self, hidden_states: torch.Tensor, topk_output: TopKOutput):
         assert (
@@ -1172,18 +1172,18 @@ class FlashInferFusedMoE(FusedMoE):
         routed_scaling_factor = self.moe_runner_config.routed_scaling_factor
 
         if isinstance(self.quant_method, UnquantizedFusedMoEMethod):
-            # lazy import
-            try:
-                from flashinfer.fused_moe import trtllm_bf16_moe
-            except ImportError as e:
-                raise ImportError(
-                    "Can't import trtllm_bf16_moe from flashinfer. "
-                    "Please check flashinfer version to use bf16 with flashinfer_trtllm backend."
-                ) from e
+            # # lazy import
+            # try:
+            #     from flashinfer.fused_moe import trtllm_bf16_moe
+            # except ImportError as e:
+            #     raise ImportError(
+            #         "Can't import trtllm_bf16_moe from flashinfer. "
+            #         "Please check flashinfer version to use bf16 with flashinfer_trtllm backend."
+            #     ) from e
 
-            with use_symmetric_memory(
-                get_tp_group(), disabled=not is_allocation_symmetric()
-            ):
+            # with use_symmetric_memory(
+            #     get_tp_group(), disabled=not is_allocation_symmetric()
+            # ):
                 # TODO: Now trtllm_bf16_moe doesn't support inplace output,
                 # we can move this out when it support that.
                 final_hidden_states = trtllm_bf16_moe(
