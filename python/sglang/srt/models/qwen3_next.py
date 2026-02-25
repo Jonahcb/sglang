@@ -62,8 +62,7 @@ _is_cpu = is_cpu()
 _is_amx_available = cpu_has_amx_support()
 
 
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+from sglang.srt.triton_utils import tl, triton
 
 
 @triton.jit

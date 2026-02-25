@@ -14,8 +14,8 @@
 """Logits processing."""
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 FMIX32_C1 = 0x85EBCA6B
 FMIX32_C2 = 0xC2B2AE35

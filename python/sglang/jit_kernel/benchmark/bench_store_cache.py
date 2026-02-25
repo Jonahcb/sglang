@@ -2,7 +2,6 @@ import itertools
 from typing import Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import set_kv_buffer_kernel
 
@@ -13,6 +12,7 @@ from sglang.jit_kernel.benchmark.utils import (
     get_benchmark_range,
 )
 from sglang.jit_kernel.kvcache import store_cache
+from sglang.srt.triton_utils import triton
 
 _is_hip = bool(torch.version.hip)
 HAS_AOT_STORE_CACHE = hasattr(torch.ops.sgl_kernel, "store_kv_cache")

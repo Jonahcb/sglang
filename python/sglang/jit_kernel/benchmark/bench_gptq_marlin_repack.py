@@ -1,12 +1,12 @@
 import os
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel.scalar_type import scalar_types
 
 from sglang.jit_kernel.gptq_marlin_repack import gptq_marlin_repack as jit_fn
 from sglang.srt.layers.quantization.utils import gptq_quantize_weights, pack_rows
+from sglang.srt.triton_utils import triton
 
 try:
     from sgl_kernel import gptq_marlin_repack as aot_fn

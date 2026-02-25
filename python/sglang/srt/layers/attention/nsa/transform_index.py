@@ -1,8 +1,8 @@
 from typing import List, Optional
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 
 def transform_index_page_table_prefill(**kwargs):

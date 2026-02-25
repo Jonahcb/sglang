@@ -33,8 +33,6 @@ from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.jit_kernel.kvcache import can_use_store_cache, store_cache
 from sglang.srt.configs.mamba_utils import BaseLinearStateParams
@@ -52,6 +50,7 @@ from sglang.srt.mem_cache.utils import (
     set_mla_kv_buffer_triton,
     set_mla_kv_scale_buffer_triton,
 )
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import (
     cpu_has_amx_support,
     is_cpu,

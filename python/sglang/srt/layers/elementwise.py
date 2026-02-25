@@ -1,9 +1,8 @@
 from typing import Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_hip
 from sglang.srt.utils.custom_op import register_custom_op
 

@@ -20,8 +20,8 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 try:
     from triton.tools.tensor_descriptor import TensorDescriptor

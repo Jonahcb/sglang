@@ -16,8 +16,8 @@ import logging
 from typing import Optional
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 logger = logging.getLogger(__name__)
 

@@ -1,17 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from https://github.com/vllm-project/vllm/blob/9fa5b25a238c08fae8acf507e5dbc923f5b2e5cb/vllm/triton_utils/importing.py
 
-import os
+import logging
 import types
 from importlib.util import find_spec
-import logging
-
 
 logger = logging.getLogger(__name__)
 
-HAS_TRITON = (
-    find_spec("triton") is not None
-)
+HAS_TRITON = find_spec("triton") is not None
 if HAS_TRITON:
     try:
         from triton.backends import backends

@@ -4,8 +4,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 AWQ_TRITON_SUPPORTED_GROUP_SIZES = [-1, 32, 64, 128]
 

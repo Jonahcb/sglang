@@ -9,9 +9,9 @@
 # ruff: noqa: E501,SIM102
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 from packaging import version
+
+from sglang.srt.triton_utils import tl, triton
 
 TRITON_22 = version.parse(triton.__version__) >= version.parse("2.2.0")
 

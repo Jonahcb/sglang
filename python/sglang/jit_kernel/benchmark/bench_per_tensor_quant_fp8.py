@@ -1,11 +1,11 @@
 from typing import Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import get_benchmark_range, run_benchmark
 from sglang.jit_kernel.per_tensor_quant_fp8 import per_tensor_quant_fp8
+from sglang.srt.triton_utils import triton
 
 try:
     from vllm import _custom_ops as ops

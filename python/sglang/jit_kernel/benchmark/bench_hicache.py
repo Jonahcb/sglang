@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import transfer_kv_all_layer, transfer_kv_per_layer
 
@@ -31,6 +30,7 @@ from sglang.jit_kernel.hicache import (
     transfer_hicache_all_layer,
     transfer_hicache_one_layer,
 )
+from sglang.srt.triton_utils import triton
 
 # NOTE: Adjustable hyperparameters for better benchmark stability
 

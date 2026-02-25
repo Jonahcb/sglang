@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, List, Optional
 
 import torch
 import torch.nn.functional as F
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.moe.moe_runner import MoeRunnerConfig
+from sglang.srt.triton_utils import tl
 from sglang.srt.utils import (
     cpu_has_amx_support,
     get_bool_env_var,

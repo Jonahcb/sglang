@@ -1,8 +1,8 @@
 import torch
-from sglang.srt.triton_utils import triton  # type: ignore
-from sglang.srt.triton_utils import tl  # type: ignore
 
 from sglang.multimodal_gen.runtime.platforms import current_platform
+from sglang.srt.triton_utils import tl  # type: ignore
+from sglang.srt.triton_utils import triton  # type: ignore
 
 
 @triton.autotune(

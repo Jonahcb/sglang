@@ -6,8 +6,6 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.batch_invariant_ops import is_batch_invariant_mode_enabled
 from sglang.srt.layers.quantization.fp8_kernel import (
@@ -20,6 +18,7 @@ from sglang.srt.layers.quantization.int8_kernel import (
     per_token_quant_int8,
     sglang_per_token_group_quant_int8,
 )
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import (
     cpu_has_amx_support,
     get_bool_env_var,

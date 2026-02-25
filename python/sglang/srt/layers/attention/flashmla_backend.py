@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
 
 import torch
-from sglang.srt.triton_utils import triton
 from sgl_kernel.flash_mla import flash_mla_with_kvcache, get_mla_metadata
 
 from sglang.srt.layers.attention.flashinfer_mla_backend import FlashInferMLAAttnBackend
@@ -16,6 +15,7 @@ from sglang.srt.layers.attention.utils import create_flashmla_kv_indices_triton
 from sglang.srt.layers.dp_attention import get_attention_tp_size
 from sglang.srt.layers.quantization.fp8_kernel import scaled_fp8_quant
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
+from sglang.srt.triton_utils import triton
 
 if TYPE_CHECKING:
     from sglang.srt.layers.radix_attention import RadixAttention

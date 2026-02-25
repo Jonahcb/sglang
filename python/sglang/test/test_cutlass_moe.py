@@ -1,7 +1,6 @@
 import argparse
 
 import torch
-from sglang.srt.triton_utils import triton  # Added import
 import triton.testing  # Added import
 from transformers import AutoConfig
 
@@ -9,6 +8,7 @@ from sglang.srt.layers.moe.cutlass_moe import cutlass_fused_experts_fp8
 from sglang.srt.layers.moe.fused_moe_triton.fused_moe import fused_experts
 from sglang.srt.layers.moe.moe_runner.base import MoeRunnerConfig
 from sglang.srt.layers.moe.topk import StandardTopKOutput
+from sglang.srt.triton_utils import triton  # Added import
 
 
 # Copy from: https://github.com/deepseek-ai/DeepGEMM/blob/main/deep_gemm/utils.py

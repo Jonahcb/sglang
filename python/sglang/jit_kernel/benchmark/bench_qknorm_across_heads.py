@@ -2,12 +2,12 @@ import itertools
 from typing import Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import rmsnorm
 
 from sglang.jit_kernel.benchmark.utils import is_in_ci
 from sglang.jit_kernel.norm import fused_inplace_qknorm_across_heads
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import get_current_device_stream_fast
 
 IS_CI = is_in_ci()

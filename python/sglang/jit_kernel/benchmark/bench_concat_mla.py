@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import concat_mla_absorb_q as aot_absorb_q
 from sgl_kernel import concat_mla_k as aot_k
@@ -9,6 +8,7 @@ from sgl_kernel import concat_mla_k as aot_k
 from sglang.jit_kernel.benchmark.utils import is_in_ci
 from sglang.jit_kernel.concat_mla import concat_mla_absorb_q as jit_absorb_q
 from sglang.jit_kernel.concat_mla import concat_mla_k as jit_k
+from sglang.srt.triton_utils import triton
 
 IS_CI = is_in_ci()
 

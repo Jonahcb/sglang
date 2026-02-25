@@ -21,8 +21,6 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.multimodal_gen.runtime.layers.attention.backends.attention_backend import (
     AttentionBackend,
@@ -32,6 +30,7 @@ from sglang.multimodal_gen.runtime.layers.attention.backends.attention_backend i
 )
 from sglang.multimodal_gen.runtime.platforms import AttentionBackendEnum
 from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
+from sglang.srt.triton_utils import tl, triton
 
 logger = init_logger(__name__)
 

@@ -3,9 +3,9 @@
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 import torch
-from sglang.srt.triton_utils import triton
 
 from sglang.srt.layers.attention.fla.utils import tensor_cache
+from sglang.srt.triton_utils import triton
 
 
 @tensor_cache

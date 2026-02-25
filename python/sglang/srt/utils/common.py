@@ -81,7 +81,6 @@ import requests
 import torch
 import torch.distributed
 import torch.distributed as dist
-from sglang.srt.triton_utils import triton
 import zmq
 from packaging import version as pkg_version
 from PIL import Image
@@ -94,6 +93,7 @@ from typing_extensions import Literal
 
 from sglang.srt.environ import envs
 from sglang.srt.observability.func_timer import enable_func_timer
+from sglang.srt.triton_utils import triton
 
 if TYPE_CHECKING:
     # Apparently importing this here is necessary to avoid a segfault, see comment in load_video below

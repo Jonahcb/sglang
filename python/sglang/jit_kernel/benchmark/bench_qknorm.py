@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import rmsnorm
 
@@ -12,6 +11,7 @@ from sglang.jit_kernel.benchmark.utils import (
     run_benchmark,
 )
 from sglang.jit_kernel.norm import fused_inplace_qknorm
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import get_current_device_stream_fast
 
 alt_stream = torch.cuda.Stream()

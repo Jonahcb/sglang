@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
 import torch
-from sglang.srt.triton_utils import triton
 
 from sglang.srt.layers.attention.flashinfer_mla_backend import FlashInferMLAAttnBackend
 from sglang.srt.layers.attention.utils import create_flashmla_kv_indices_triton
 from sglang.srt.layers.dp_attention import get_attention_tp_size
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import is_cuda
 
 if TYPE_CHECKING:

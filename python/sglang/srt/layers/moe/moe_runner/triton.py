@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.moe.moe_runner.base import (
     MoeQuantInfo,
@@ -19,6 +18,7 @@ from sglang.srt.layers.moe.moe_runner.base import (
     register_pre_permute,
 )
 from sglang.srt.layers.moe.utils import MoeRunnerBackend
+from sglang.srt.triton_utils import tl
 from sglang.srt.utils import cpu_has_amx_support, is_cpu, is_cuda, is_hip, is_xpu
 
 if TYPE_CHECKING:

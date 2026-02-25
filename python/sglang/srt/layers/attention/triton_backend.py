@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton
@@ -13,6 +11,7 @@ from sglang.srt.layers.dp_attention import get_attention_tp_size
 from sglang.srt.layers.radix_attention import AttentionType
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.speculative.spec_utils import generate_draft_decode_kv_indices
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import (
     get_bool_env_var,
     get_device_core_count,

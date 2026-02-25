@@ -7,8 +7,8 @@ avoiding multiple `index_elementwise_kernel` launches.
 """
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 
 @triton.jit

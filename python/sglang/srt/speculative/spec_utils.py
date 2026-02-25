@@ -7,8 +7,6 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 from huggingface_hub import snapshot_download
 
 from sglang.srt.constrained.base_grammar_backend import BaseGrammarObject
@@ -21,6 +19,7 @@ from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import Req
 from sglang.srt.mem_cache.common import get_last_loc
 from sglang.srt.server_args import ServerArgs, get_global_server_args
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_cuda, is_hip, is_npu, next_power_of_2
 
 _is_cuda = is_cuda()

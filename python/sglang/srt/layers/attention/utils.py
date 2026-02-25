@@ -1,7 +1,6 @@
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_cuda
 
 _FLASHMLA_CREATE_KV_BLOCK_SIZE = 4096

@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.configs.model_config import AttentionArch
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
@@ -15,6 +13,7 @@ from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.speculative.spec_info import SpecInput
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import get_compiler_backend
 
 if TYPE_CHECKING:

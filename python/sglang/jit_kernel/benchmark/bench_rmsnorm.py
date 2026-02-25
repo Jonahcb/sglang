@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 from flashinfer import rmsnorm as fi_rmsnorm
 from sgl_kernel import rmsnorm
@@ -13,6 +12,7 @@ from sglang.jit_kernel.benchmark.utils import (
     run_benchmark,
 )
 from sglang.jit_kernel.norm import rmsnorm as jit_rmsnorm
+from sglang.srt.triton_utils import triton
 
 
 def sglang_aot_rmsnorm(

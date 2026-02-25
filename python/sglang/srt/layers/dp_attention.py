@@ -7,8 +7,6 @@ from enum import IntEnum, auto
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.distributed import (
     GroupCoordinator,
@@ -26,6 +24,7 @@ from sglang.srt.distributed import (
 from sglang.srt.distributed.device_communicators.pynccl_allocator import (
     use_symmetric_memory,
 )
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import get_bool_env_var, is_hip
 
 if TYPE_CHECKING:

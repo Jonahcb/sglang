@@ -3,10 +3,9 @@ from typing import Optional, Tuple, Union
 
 import pytest
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.jit_kernel.pos_enc import rotary_embedding
+from sglang.srt.triton_utils import tl, triton
 
 
 @triton.jit

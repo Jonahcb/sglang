@@ -6,8 +6,6 @@
 
 import torch
 import torch.nn as nn
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.chunk_delta_h import chunk_gated_delta_rule_fwd_h
 from sglang.srt.layers.attention.fla.cumsum import chunk_local_cumsum
@@ -19,6 +17,7 @@ from sglang.srt.layers.attention.fla.l2norm import l2norm_fwd
 from sglang.srt.layers.attention.fla.op import exp, log
 from sglang.srt.layers.attention.fla.solve_tril import solve_tril
 from sglang.srt.layers.attention.fla.utils import is_amd
+from sglang.srt.triton_utils import tl, triton
 
 BT_LIST_AUTOTUNE = [32, 64, 128]
 NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if is_amd else [4, 8, 16, 32]

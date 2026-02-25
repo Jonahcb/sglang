@@ -6,10 +6,9 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.utils import input_guard
+from sglang.srt.triton_utils import tl, triton
 
 BT_LIST = [8, 16, 32, 64, 128]
 

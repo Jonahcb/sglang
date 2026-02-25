@@ -5,8 +5,6 @@
 from typing import Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.index import (
     prepare_chunk_indices,
@@ -14,6 +12,7 @@ from sglang.srt.layers.attention.fla.index import (
 )
 from sglang.srt.layers.attention.fla.op import exp, safe_exp
 from sglang.srt.layers.attention.fla.utils import is_nvidia_hopper
+from sglang.srt.triton_utils import tl, triton
 
 NUM_WARPS = [2, 4] if is_nvidia_hopper else [2, 4, 8, 16]
 CHUNK_SIZE = 64

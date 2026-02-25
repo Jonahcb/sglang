@@ -5,11 +5,10 @@
 from typing import Optional
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.index import prepare_chunk_indices
 from sglang.srt.layers.attention.fla.utils import input_guard
+from sglang.srt.triton_utils import tl, triton
 
 
 # @triton.autotune(

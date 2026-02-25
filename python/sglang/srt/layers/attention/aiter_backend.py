@@ -10,7 +10,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Optional
 
 import torch
-from sglang.srt.triton_utils import triton
 
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton
@@ -19,6 +18,7 @@ from sglang.srt.layers.dp_attention import (
     is_dp_attention_enabled,
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import is_gfx95_supported
 
 if TYPE_CHECKING:

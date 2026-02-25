@@ -2,10 +2,10 @@ import itertools
 import os
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.awq_dequantize import awq_dequantize as jit_awq_dequantize
+from sglang.srt.triton_utils import triton
 
 try:
     from sgl_kernel import awq_dequantize as aot_awq_dequantize

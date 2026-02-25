@@ -18,8 +18,6 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 from torch import nn
 
 from sglang.srt.distributed import (
@@ -55,6 +53,7 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.server_args import get_global_server_args
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils.common import is_npu, use_intel_amx_backend
 
 logger = logging.getLogger(__name__)

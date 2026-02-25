@@ -7,9 +7,9 @@
 # Adapted from https://github.com/state-spaces/mamba/blob/v2.2.4/mamba_ssm/ops/triton/selective_state_update.py
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 from packaging import version
+
+from sglang.srt.triton_utils import tl, triton
 
 PAD_SLOT_ID = -1
 

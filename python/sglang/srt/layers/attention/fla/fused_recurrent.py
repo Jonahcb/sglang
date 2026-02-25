@@ -5,11 +5,10 @@
 from typing import Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.op import exp
 from sglang.srt.layers.attention.fla.utils import input_guard
+from sglang.srt.triton_utils import tl, triton
 
 
 @triton.jit(do_not_specialize=["T"])

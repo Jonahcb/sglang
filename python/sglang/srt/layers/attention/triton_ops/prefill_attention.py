@@ -19,9 +19,8 @@ It supporst page size = 1.
 # Adapted from
 # https://github.com/ModelTC/lightllm/blob/f2a54f0912293f683bf1d1695fd12c4098a5bf82/lightllm/models/llama/triton_kernel/context_flashattention_nopad.py#L1
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_cuda, is_hip
 
 _is_cuda = is_cuda()

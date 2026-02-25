@@ -22,9 +22,7 @@ It supports page size = 1.
 
 import logging
 
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
-
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_hip
 
 _is_hip = is_hip()

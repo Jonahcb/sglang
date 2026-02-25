@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import ModelWorkerBatch, ScheduleBatch
@@ -29,6 +27,7 @@ from sglang.srt.speculative.spec_utils import (
     SIMULATE_ACC_LEN,
     generate_simulated_accept_index,
 )
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils.common import is_cuda, is_hip, is_npu, next_power_of_2
 
 _is_cuda = is_cuda()

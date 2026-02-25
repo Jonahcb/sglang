@@ -20,8 +20,6 @@ from contextlib import nullcontext
 from typing import Iterable, Optional, Set, Tuple, Union
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 from torch import nn
 from transformers import PretrainedConfig
 
@@ -65,6 +63,7 @@ from sglang.srt.model_loader.weight_utils import (
     maybe_remap_kv_scale_name,
 )
 from sglang.srt.server_args import get_global_server_args
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import (
     BumpAllocator,
     add_prefix,

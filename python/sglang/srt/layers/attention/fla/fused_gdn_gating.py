@@ -1,8 +1,8 @@
 from typing import Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 
 # g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias)

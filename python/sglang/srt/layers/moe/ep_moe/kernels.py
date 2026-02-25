@@ -1,8 +1,8 @@
 import logging
 
 import torch
-from sglang.srt.triton_utils import triton
 
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import ceil_div, is_cuda
 
 logger = logging.getLogger(__name__)

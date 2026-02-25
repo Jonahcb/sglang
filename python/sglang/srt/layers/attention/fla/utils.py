@@ -11,9 +11,9 @@ from functools import lru_cache
 from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
 from packaging import version
 
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils.common import torch_release
 
 logger = logging.getLogger(__name__)

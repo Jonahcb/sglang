@@ -1,9 +1,10 @@
 from typing import Optional
 
 import torch
-from sglang.srt.triton_utils import triton  # type: ignore
-from sglang.srt.triton_utils import tl  # type: ignore
 from torch import Tensor
+
+from sglang.srt.triton_utils import tl  # type: ignore
+from sglang.srt.triton_utils import triton  # type: ignore
 
 
 # RMSNorm-fp32

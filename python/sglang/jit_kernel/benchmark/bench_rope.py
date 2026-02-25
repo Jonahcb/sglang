@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import (
@@ -10,6 +9,7 @@ from sglang.jit_kernel.benchmark.utils import (
     get_benchmark_range,
     run_benchmark,
 )
+from sglang.srt.triton_utils import triton
 
 MAX_SEQ_LEN = 131072
 ROPE_BASE = 10000.0

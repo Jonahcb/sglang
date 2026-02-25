@@ -5,7 +5,6 @@ import itertools
 from typing import Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import is_in_ci
@@ -15,6 +14,7 @@ from sglang.multimodal_gen.runtime.layers.layernorm import (
     ScaleResidualLayerNormScaleShift,
     ScaleResidualRMSNormScaleShift,
 )
+from sglang.srt.triton_utils import triton
 
 if is_in_ci():
     B_RANGE, S_RANGE, D_RANGE = [1], [128], [1024]

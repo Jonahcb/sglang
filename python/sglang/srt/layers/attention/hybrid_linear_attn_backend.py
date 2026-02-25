@@ -2,8 +2,6 @@ import logging
 from typing import Optional, Union
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.mamba.causal_conv1d_triton import PAD_SLOT_ID
@@ -22,6 +20,7 @@ from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.speculative.eagle_info import EagleDraftInput, EagleVerifyInput
 from sglang.srt.speculative.spec_info import SpecInput
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_cpu
 
 if not is_cpu():

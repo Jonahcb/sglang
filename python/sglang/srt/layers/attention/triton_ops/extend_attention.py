@@ -17,12 +17,11 @@ It supports page size = 1 and prefill with KV cache (i.e. extend).
 """
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.triton_ops.prefill_attention import (
     context_attention_fwd,
 )
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import is_cuda, is_hip
 
 _is_cuda = is_cuda()

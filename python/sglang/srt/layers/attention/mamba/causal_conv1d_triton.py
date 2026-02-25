@@ -5,8 +5,8 @@
 from typing import List, Optional, Union
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
+
+from sglang.srt.triton_utils import tl, triton
 
 PAD_SLOT_ID = -1
 

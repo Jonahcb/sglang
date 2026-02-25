@@ -5,10 +5,9 @@
 from typing import Optional, Tuple
 
 import torch
-from sglang.srt.triton_utils import triton
-from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.index import prepare_chunk_indices
+from sglang.srt.triton_utils import tl, triton
 
 
 # @triton.autotune(
