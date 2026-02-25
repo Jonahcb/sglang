@@ -28,24 +28,24 @@ from sglang.srt.utils import is_cuda, is_npu, is_xpu
 _is_cuda = is_cuda()
 _is_npu = is_npu()
 _is_xpu = is_xpu()
-# if not (_is_npu or _is_xpu):
-#     from sgl_kernel.kvcacheio import (
-#         transfer_kv_all_layer,
-#         transfer_kv_all_layer_direct_lf_pf,
-#         transfer_kv_all_layer_lf_pf,
-#         transfer_kv_all_layer_lf_ph,
-#         transfer_kv_all_layer_mla,
-#         transfer_kv_all_layer_mla_lf_pf,
-#         transfer_kv_direct,
-#         transfer_kv_per_layer,
-#         transfer_kv_per_layer_direct_pf_lf,
-#         transfer_kv_per_layer_mla,
-#         transfer_kv_per_layer_mla_pf_lf,
-#         transfer_kv_per_layer_pf_lf,
-#         transfer_kv_per_layer_ph_lf,
-#     )
-# if _is_npu:
-#     from sgl_kernel_npu.kvcacheio import TransferDirection, transfer_kv_dim_exchange
+if not (_is_npu or _is_xpu):
+    from sgl_kernel.kvcacheio import (
+        transfer_kv_all_layer,
+        transfer_kv_all_layer_direct_lf_pf,
+        transfer_kv_all_layer_lf_pf,
+        transfer_kv_all_layer_lf_ph,
+        transfer_kv_all_layer_mla,
+        transfer_kv_all_layer_mla_lf_pf,
+        transfer_kv_direct,
+        transfer_kv_per_layer,
+        transfer_kv_per_layer_direct_pf_lf,
+        transfer_kv_per_layer_mla,
+        transfer_kv_per_layer_mla_pf_lf,
+        transfer_kv_per_layer_pf_lf,
+        transfer_kv_per_layer_ph_lf,
+    )
+if _is_npu:
+    from sgl_kernel_npu.kvcacheio import TransferDirection, transfer_kv_dim_exchange
 
 logger = logging.getLogger(__name__)
 
@@ -619,6 +619,54 @@ class MHATokenToKVPoolHost(HostKVCache):
             )
         else:
             raise ValueError(f"Unsupported layout: {self.layout}")
+
+    def get_split_heads_page_buffer_meta(
+        self, indices: torch.Tensor, split_factor: int
+    ):
+        """
+        get meta data for zero copy of heterogeneous ranks' KVCache
+        """
+        assert self.layout == "page_head"
+        assert len(indices) % self.page_size == 0
+        assert self.head_num % split_factor == 0
+        ptr_list = []
+        kv_buffer_data_ptr = self.kv_buffer.data_ptr()
+        indices = indices.tolist()
+        v_offset = (
+            self.layer_num
+            * self.size
+            * self.head_num
+            * self.head_dim
+            * self.dtype.itemsize
+        )
+        for index in range(0, len(indices), self.page_size):
+            for head_id in range(0, self.head_num, self.head_num // split_factor):
+                k_ptr = (
+                    kv_buffer_data_ptr
+                    + indices[index]
+                    * self.layer_num
+                    * self.head_num
+                    * self.head_dim
+                    * self.dtype.itemsize
+                    + head_id
+                    * self.page_size
+                    * self.layer_num
+                    * self.head_dim
+                    * self.dtype.itemsize
+                )
+                v_ptr = k_ptr + v_offset
+                ptr_list.append(k_ptr)
+                ptr_list.append(v_ptr)
+        element_size = (
+            self.layer_num
+            * self.dtype.itemsize
+            * self.page_size
+            * self.head_num
+            * self.head_dim
+            // split_factor
+        )
+        element_size_list = [element_size] * len(ptr_list)
+        return ptr_list, element_size_list
 
     def get_page_buffer_meta(self, indices):
         """ "
