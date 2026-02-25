@@ -71,7 +71,8 @@ REDUCE_OP_SUM = int(torch.distributed.ReduceOp.SUM)
 
 @dataclass
 class GraphCaptureContext:
-    stream: torch.get_device_module().Stream
+    #stream: torch.get_device_module().Stream
+    pass
 
 
 @dataclass
