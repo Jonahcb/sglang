@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 from packaging import version
 
 from sglang.srt.utils.common import torch_release

@@ -81,7 +81,7 @@ import requests
 import torch
 import torch.distributed
 import torch.distributed as dist
-import triton
+from sglang.srt.triton_utils import triton
 import zmq
 from packaging import version as pkg_version
 from PIL import Image

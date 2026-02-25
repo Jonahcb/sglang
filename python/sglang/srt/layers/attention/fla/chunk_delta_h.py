@@ -5,8 +5,8 @@
 from typing import Optional, Tuple
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.attention.fla.index import (
     prepare_chunk_indices,

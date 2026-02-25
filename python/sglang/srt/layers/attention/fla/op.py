@@ -4,9 +4,9 @@
 
 import os
 
-import triton
-import triton.language as tl
-import triton.language.extra.libdevice as tldevice
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
+from sglang.srt.triton_utils import tldevice
 
 from sglang.srt.layers.attention.fla.utils import is_gather_supported
 
