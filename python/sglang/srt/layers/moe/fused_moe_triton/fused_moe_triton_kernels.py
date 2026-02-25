@@ -6,8 +6,8 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.batch_invariant_ops import is_batch_invariant_mode_enabled
 from sglang.srt.layers.quantization.fp8_kernel import (

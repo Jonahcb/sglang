@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import ModelWorkerBatch, ScheduleBatch

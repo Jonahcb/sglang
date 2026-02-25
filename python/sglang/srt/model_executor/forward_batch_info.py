@@ -35,8 +35,8 @@ from functools import total_ordering
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.distributed.parallel_state import (
     get_moe_expert_parallel_world_size,

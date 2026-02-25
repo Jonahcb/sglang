@@ -1,7 +1,7 @@
 import argparse
 
 import torch
-import triton  # Added import
+from sglang.srt.triton_utils import triton  # Added import
 import triton.testing  # Added import
 from transformers import AutoConfig
 

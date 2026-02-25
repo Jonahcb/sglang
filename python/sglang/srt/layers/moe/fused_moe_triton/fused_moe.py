@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 import torch
 import torch.nn.functional as F
-import triton.language as tl
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.moe.moe_runner import MoeRunnerConfig
 from sglang.srt.utils import (

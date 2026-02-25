@@ -5,8 +5,8 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.utils import get_device_name, is_cuda
 

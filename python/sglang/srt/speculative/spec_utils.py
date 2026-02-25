@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 from huggingface_hub import snapshot_download
 
 from sglang.srt.constrained.base_grammar_backend import BaseGrammarObject

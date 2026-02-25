@@ -10,7 +10,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Optional
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton

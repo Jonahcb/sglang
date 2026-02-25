@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
-import triton.language as tl
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.layers.moe.moe_runner.base import (
     MoeQuantInfo,

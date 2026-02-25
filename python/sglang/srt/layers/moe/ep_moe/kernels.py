@@ -1,7 +1,7 @@
 import logging
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 
 from sglang.srt.utils import ceil_div, is_cuda
 
@@ -13,7 +13,7 @@ if _is_cuda:
         sglang_per_token_group_quant_fp8 as per_token_group_quant_fp8,
     )
 
-import triton.language as tl
+from sglang.srt.triton_utils import tl
 
 
 def _get_launch_config_1d(device, numel):

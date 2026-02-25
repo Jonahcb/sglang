@@ -23,8 +23,8 @@ import abc
 from typing import TYPE_CHECKING
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.utils import get_bool_env_var, get_num_new_pages, next_power_of_2
 

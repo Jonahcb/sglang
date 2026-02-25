@@ -9,7 +9,7 @@
 # ruff: noqa: E501
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 from einops import rearrange
 from packaging import version
 

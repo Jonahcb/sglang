@@ -2,7 +2,7 @@ import os
 
 import numpy as np
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel.scalar_type import scalar_types
 

@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.compilation.piecewise_context_manager import is_in_piecewise_cuda_graph
 from sglang.srt.layers.attention.flashinfer_mla_backend import (

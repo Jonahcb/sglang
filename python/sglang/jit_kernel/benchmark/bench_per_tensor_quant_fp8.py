@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import get_benchmark_range, run_benchmark

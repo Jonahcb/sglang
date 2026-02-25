@@ -1,8 +1,8 @@
 from typing import Optional
 
 import torch
-import triton  # type: ignore
-import triton.language as tl  # type: ignore
+from sglang.srt.triton_utils import triton  # type: ignore
+from sglang.srt.triton_utils import tl  # type: ignore
 from torch import Tensor
 
 

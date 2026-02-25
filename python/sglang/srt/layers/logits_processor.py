@@ -18,8 +18,8 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 from torch import nn
 
 from sglang.srt.distributed import (

@@ -2,7 +2,7 @@ import itertools
 import os
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.awq_dequantize import awq_dequantize as jit_awq_dequantize

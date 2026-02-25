@@ -2,7 +2,7 @@ import itertools
 
 import pytest
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 
 
 def torch_concat_mla_k(

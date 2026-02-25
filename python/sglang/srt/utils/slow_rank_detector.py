@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 
 import torch
 import torch.distributed as dist
-import triton
+from sglang.srt.triton_utils import triton
 
 logger = logging.getLogger(__name__)
 

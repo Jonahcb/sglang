@@ -7,8 +7,8 @@ from enum import IntEnum, auto
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.distributed import (
     GroupCoordinator,

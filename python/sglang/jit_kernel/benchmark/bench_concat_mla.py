@@ -1,7 +1,7 @@
 import itertools
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import concat_mla_absorb_q as aot_absorb_q
 from sgl_kernel import concat_mla_k as aot_k
