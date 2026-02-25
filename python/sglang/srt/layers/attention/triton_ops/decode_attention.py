@@ -22,8 +22,8 @@ It supports page size = 1.
 
 import logging
 
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.utils import is_hip
 

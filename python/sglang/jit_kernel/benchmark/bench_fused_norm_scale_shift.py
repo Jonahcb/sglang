@@ -5,7 +5,7 @@ import itertools
 from typing import Tuple
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import is_in_ci

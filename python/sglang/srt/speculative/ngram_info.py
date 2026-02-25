@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Tuple
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 
 from sglang.srt.constrained.base_grammar_backend import BaseGrammarObject
 from sglang.srt.server_args import get_global_server_args

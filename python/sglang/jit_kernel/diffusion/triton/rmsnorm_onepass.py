@@ -1,6 +1,6 @@
 import torch
-import triton  # type: ignore
-import triton.language as tl  # type: ignore
+from sglang.srt.triton_utils import triton  # type: ignore
+from sglang.srt.triton_utils import tl  # type: ignore
 
 
 # Adapted from https://github.com/ModelTC/LightX2V/blob/main/lightx2v/common/ops/norm/triton_ops.py#L905-L956

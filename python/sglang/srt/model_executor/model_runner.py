@@ -388,7 +388,8 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         min_per_gpu_memory = self.init_torch_distributed()
 
         # Init forward stream for overlap schedule
-        self.forward_stream = torch.get_device_module(self.device).Stream()
+        #self.forward_stream = torch.get_device_module(self.device).Stream()
+        self.forward_stream = None
 
         # CPU offload
         set_offloader(create_offloader_from_server_args(server_args, dp_rank=dp_rank))
@@ -725,6 +726,9 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     def init_torch_distributed(self):
         tic = time.perf_counter()
         logger.info("Init torch distributed begin.")
+
+        if self.device == "mlx":
+            return
 
         try:
             torch.get_device_module(self.device).set_device(self.gpu_id)

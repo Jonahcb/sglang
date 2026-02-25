@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 from sgl_kernel import transfer_kv_all_layer, transfer_kv_per_layer
 

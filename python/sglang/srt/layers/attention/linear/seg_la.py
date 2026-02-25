@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 
 # arg `meta` of `seg_la_fwd` is SegLaMeta

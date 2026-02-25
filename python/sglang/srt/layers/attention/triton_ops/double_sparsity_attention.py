@@ -1,6 +1,6 @@
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import is_cuda, is_hip

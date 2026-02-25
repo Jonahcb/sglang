@@ -5,8 +5,8 @@ from enum import IntEnum
 from typing import Optional
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.utils import get_bool_env_var, is_hip
 from sglang.srt.utils.custom_op import register_custom_op

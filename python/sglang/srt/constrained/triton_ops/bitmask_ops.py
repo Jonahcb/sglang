@@ -4,8 +4,8 @@
 from typing import List, Optional, Union
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 
 from sglang.srt.utils import get_device_core_count
 

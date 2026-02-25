@@ -1,7 +1,7 @@
 import itertools
 
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 import triton.testing
 from flashinfer import fused_add_rmsnorm as fi_fused_add_rmsnorm
 

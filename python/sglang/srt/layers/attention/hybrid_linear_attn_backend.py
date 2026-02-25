@@ -3,8 +3,8 @@ import math
 from typing import Optional, Union
 
 import torch
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 from einops import rearrange
 
 from sglang.srt.environ import Envs

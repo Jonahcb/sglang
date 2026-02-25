@@ -10,8 +10,8 @@ from functools import lru_cache
 
 import torch
 import torch.nn.functional as F
-import triton
-import triton.language as tl
+from sglang.srt.triton_utils import triton
+from sglang.srt.triton_utils import tl
 from einops import rearrange
 
 from sglang.srt.server_args import get_global_server_args

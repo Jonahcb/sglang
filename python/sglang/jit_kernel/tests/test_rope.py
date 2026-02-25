@@ -1,6 +1,6 @@
 import pytest
 import torch
-import triton
+from sglang.srt.triton_utils import triton
 
 DEVICE = "cuda"
 DTYPE = torch.bfloat16
