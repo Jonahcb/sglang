@@ -55,6 +55,7 @@ from sglang.srt.debug_utils.tensor_dump_forward_hook import (
     register_forward_hook_for_model,
 )
 from sglang.srt.distributed import (
+    get_default_distributed_backend,
     get_pp_group,
     get_tp_group,
     get_world_group,
@@ -192,6 +193,11 @@ _is_hip = is_hip()
 _is_npu = is_npu()
 _is_cpu_amx_available = cpu_has_amx_support()
 _is_cpu_arm64 = is_host_cpu_arm64()
+
+if _is_npu:
+    from sglang.srt.hardware_backend.npu.utils import init_npu_backend
+
+    init_npu_backend()
 
 MLA_ATTENTION_BACKENDS = [
     "aiter",
@@ -388,8 +394,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         min_per_gpu_memory = self.init_torch_distributed()
 
         # Init forward stream for overlap schedule
-        #self.forward_stream = torch.get_device_module(self.device).Stream()
-        self.forward_stream = None
+        self.forward_stream = torch.get_device_module(self.device).Stream()
 
         # CPU offload
         set_offloader(create_offloader_from_server_args(server_args, dp_rank=dp_rank))
@@ -727,9 +732,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         tic = time.perf_counter()
         logger.info("Init torch distributed begin.")
 
-        if self.device == "mlx":
-            return
-
         try:
             torch.get_device_module(self.device).set_device(self.gpu_id)
         except Exception:
@@ -738,29 +740,17 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             )
             raise
 
-        if self.device == "cuda":
-            if self.server_args.elastic_ep_backend == "mooncake":
-                backend = "mooncake"
-                if self.server_args.mooncake_ib_device:
-                    mooncake_ib_device = self.server_args.mooncake_ib_device.split(",")
-                    try:
-                        from mooncake import ep as mooncake_ep
+        backend = get_default_distributed_backend(self.device)
+        if self.device == "cuda" and self.server_args.elastic_ep_backend == "mooncake":
+            backend = "mooncake"
+            if self.server_args.mooncake_ib_device:
+                mooncake_ib_device = self.server_args.mooncake_ib_device.split(",")
+                try:
+                    from mooncake import ep as mooncake_ep
 
-                        mooncake_ep.set_device_filter(mooncake_ib_device)
-                    except:
-                        pass  # A warning will be raised in `init_distributed_environment`
-            else:
-                backend = "nccl"
-        elif self.device == "xpu":
-            backend = "xccl"
-        elif self.device == "hpu":
-            backend = "hccl"
-        elif self.device == "cpu":
-            backend = "gloo"
-        elif self.device == "npu":
-            backend = "hccl"
-        elif self.device == "musa":
-            backend = "mccl"
+                    mooncake_ep.set_device_filter(mooncake_ib_device)
+                except:
+                    pass  # A warning will be raised in `init_distributed_environment`
 
         before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         if not self.server_args.enable_p2p_check:
