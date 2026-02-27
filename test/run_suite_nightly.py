@@ -15,6 +15,7 @@ suites = {
         TestFile("test_lora_openai_api.py", 30),
         TestFile("test_lora_openai_compatible.py", 150),
         TestFile("test_lora_hf_sgl_logprob_diff.py", 300),
+        TestFile("test_lora_moe_vllm_sgl_logprob_diff.py", 50),
         TestFile("test_batch_invariant_ops.py", 10),
         TestFile("test_cpp_radix_cache.py", 60),
         TestFile("test_deepseek_v3_deterministic.py", 240),
