@@ -2,7 +2,6 @@ import argparse
 import itertools
 
 import torch
-import triton
 from flashinfer import (
     scaled_fp4_grouped_quantize,
     silu_and_mul_scaled_nvfp4_experts_quantize,
@@ -11,6 +10,7 @@ from sgl_kernel.elementwise import silu_and_mul
 
 from sglang.srt.layers import deep_gemm_wrapper
 from sglang.srt.layers.moe.ep_moe.kernels import silu_and_mul_masked_post_quant_fwd
+from sglang.srt.triton_utils import triton
 
 
 def _test_accuracy_once(E, M, K, input_dtype, device):

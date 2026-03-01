@@ -3,11 +3,10 @@ import math
 import os
 
 import torch
-import triton
-import triton.language as tl
 from sgl_kernel import moe_fused_gate
 
 from sglang.srt.layers.moe.topk import biased_grouped_topk
+from sglang.srt.triton_utils import testing, tl, triton
 
 # CI environment detection
 IS_CI = (

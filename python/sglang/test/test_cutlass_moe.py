@@ -1,7 +1,6 @@
 import argparse
 
 import torch
-import triton.testing  # Added import
 from transformers import AutoConfig
 
 from sglang.srt.layers.moe.cutlass_moe import cutlass_fused_experts_fp8

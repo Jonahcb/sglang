@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import (
     DEFAULT_DEVICE,

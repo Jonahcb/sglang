@@ -2,7 +2,6 @@
 import argparse
 
 import torch
-import triton
 from vllm.model_executor.layers.fused_moe.fused_moe import fused_moe as fused_moe_vllm
 
 from sglang.srt.distributed.parallel_state import (
@@ -14,6 +13,7 @@ from sglang.srt.distributed.parallel_state import (
 from sglang.srt.layers.moe.fused_moe_triton.fused_moe import (
     fused_moe as fused_moe_sglang,
 )
+from sglang.srt.triton_utils import triton
 
 from .common_utils import get_model_config
 

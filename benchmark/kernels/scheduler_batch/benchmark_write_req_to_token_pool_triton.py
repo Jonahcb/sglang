@@ -2,8 +2,8 @@ import itertools
 import os
 
 import torch
-import triton
-import triton.language as tl
+
+from sglang.srt.triton_utils import tl, triton
 
 
 @triton.jit

@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-import triton.testing
 from flashinfer import fused_add_rmsnorm as fi_fused_add_rmsnorm
 
 from sglang.jit_kernel.benchmark.utils import is_in_ci

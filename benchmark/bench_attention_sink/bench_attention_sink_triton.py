@@ -1,12 +1,12 @@
 import argparse
 
 import torch
-import triton
 
 from sglang.srt.layers.attention.triton_ops.decode_attention import (
     decode_attention_fwd_grouped,
 )
 from sglang.srt.layers.attention.triton_ops.extend_attention import extend_attention_fwd
+from sglang.srt.triton_utils import triton
 
 # gpt oss
 head_num = 64

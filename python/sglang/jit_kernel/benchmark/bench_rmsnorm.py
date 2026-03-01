@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-import triton.testing
 from flashinfer import rmsnorm as fi_rmsnorm
 from sgl_kernel import rmsnorm
 

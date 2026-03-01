@@ -4,8 +4,9 @@ import itertools
 import os
 
 import torch
-import triton
 from sgl_kernel import int8_scaled_mm
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional vLLM import
 try:

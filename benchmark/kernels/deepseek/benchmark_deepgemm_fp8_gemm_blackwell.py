@@ -2,7 +2,6 @@ import argparse
 from typing import Tuple
 
 import torch
-import triton
 from deep_gemm import ceil_div
 from flashinfer.gemm import gemm_fp8_nt_groupwise
 
@@ -11,6 +10,7 @@ from sglang.srt.layers.quantization.fp8_kernel import (
     w8a8_block_fp8_matmul_deepgemm,
 )
 from sglang.srt.layers.quantization.fp8_utils import requant_weight_ue8m0
+from sglang.srt.triton_utils import triton
 
 BLOCK_SIZE = 128
 

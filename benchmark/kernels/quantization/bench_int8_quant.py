@@ -1,10 +1,10 @@
 import argparse
 
 import torch
-import triton
 from vllm._custom_ops import scaled_int8_quant as vllm_scaled_int8_quant
 
 from sglang.srt.layers.quantization.int8_kernel import per_token_quant_int8
+from sglang.srt.triton_utils import triton
 
 
 @torch.compile(backend="inductor")

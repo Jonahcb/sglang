@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-import triton.testing
 from sgl_kernel import transfer_kv_all_layer, transfer_kv_per_layer
 
 from sglang.jit_kernel.benchmark.utils import DEFAULT_QUANTILES, get_benchmark_range

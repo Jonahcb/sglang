@@ -2,7 +2,6 @@ import itertools
 import os
 
 import torch
-import triton
 from sgl_kernel import FusedSetKVBufferArg
 from sgl_kernel.testing.rotary_embedding import (
     FlashInferRotaryEmbedding,
@@ -11,6 +10,7 @@ from sgl_kernel.testing.rotary_embedding import (
     create_inputs,
 )
 
+from sglang.srt.triton_utils import testing, triton
 from sglang.srt.utils.bench_utils import bench_kineto
 
 # CI environment detection

@@ -2,9 +2,9 @@ import itertools
 
 import torch
 import torch.nn.functional as F
-import triton.testing as tt
 
 from sglang.srt.layers.attention.triton_ops.extend_attention import extend_attention_fwd
+from sglang.srt.triton_utils import testing as tt
 
 
 def extend_attention_fwd_torch(

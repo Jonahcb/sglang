@@ -4,12 +4,13 @@ from typing import Optional, Tuple
 
 import pytest
 import torch
-import triton
 from sgl_kernel.flash_mla import (
     flash_mla_sparse_fwd,
     flash_mla_with_kvcache,
     get_mla_metadata,
 )
+
+from sglang.srt.triton_utils import testing, triton
 
 # ================ prefill usage ================ #
 S_Q_PREFILL = [1, 62]

@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Tuple
 
 import ray
 import torch
-import triton
 from common_utils import (
     BenchmarkConfig,
     get_config_filename,
@@ -32,6 +31,7 @@ from sglang.srt.server_args import (
     ServerArgs,
     set_global_server_args_for_scheduler,
 )
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import is_hip
 
 _is_hip = is_hip()

@@ -1,10 +1,11 @@
 import os
 
 import torch
-import triton
-import triton.language as tl
 from sgl_kernel import moe_sum_reduce as moe_sum_reduce_cuda
-from triton.testing import do_bench
+
+from sglang.srt.triton_utils import testing, tl, triton
+
+do_bench = testing.do_bench
 
 # CI environment detection
 IS_CI = (

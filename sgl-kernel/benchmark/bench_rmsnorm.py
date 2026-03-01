@@ -9,9 +9,9 @@ from typing import List, Optional, Tuple, Union
 import sgl_kernel
 import torch
 import torch.nn as nn
-import triton
-import triton.testing
 from sgl_kernel.utils import is_arch_support_pdl
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional imports
 try:

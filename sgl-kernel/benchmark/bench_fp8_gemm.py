@@ -5,9 +5,10 @@ import os
 from typing import Optional, Tuple
 
 import torch
-import triton
 from sgl_kernel import fp8_scaled_mm as sgl_scaled_mm
 from sgl_kernel import sgl_per_tensor_quant_fp8
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional vLLM import
 try:

@@ -12,9 +12,11 @@ if TYPE_CHECKING or HAS_TRITON:
     import triton
     import triton.language as tl
     import triton.language.extra.libdevice as tldevice
+    from triton import testing
 else:
     triton = TritonPlaceholder()
     tl = TritonLanguagePlaceholder()
     tldevice = TritonLanguagePlaceholder()
+    testing = triton.testing
 
-__all__ = ["HAS_TRITON", "triton", "tl", "tldevice"]
+__all__ = ["HAS_TRITON", "triton", "tl", "tldevice", "testing"]

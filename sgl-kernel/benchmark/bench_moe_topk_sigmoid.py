@@ -3,8 +3,9 @@ import os
 
 import pytest
 import torch
-import triton
 from sgl_kernel import topk_sigmoid
+
+from sglang.srt.triton_utils import testing, triton
 
 # CI environment detection
 IS_CI = (

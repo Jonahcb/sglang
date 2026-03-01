@@ -4,12 +4,13 @@ import itertools
 import os
 
 import torch
-import triton
 from sgl_kernel import (
     int8_scaled_mm,
     qserve_w4a8_per_chn_gemm,
     qserve_w4a8_per_group_gemm,
 )
+
+from sglang.srt.triton_utils import testing, triton
 
 # CI environment detection
 IS_CI = (

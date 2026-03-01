@@ -21,8 +21,9 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import torch
-import triton
 from tqdm import tqdm
+
+from sglang.srt.triton_utils import triton
 
 mp.set_start_method("spawn", force=True)
 

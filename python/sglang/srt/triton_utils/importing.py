@@ -60,6 +60,7 @@ class TritonPlaceholder(types.ModuleType):
         self.heuristics = self._dummy_decorator("heuristics")
         self.Config = self._dummy_decorator("Config")
         self.language = TritonLanguagePlaceholder()
+        self.testing = TritonTestingPlaceholder()
 
     def _dummy_decorator(self, name):
         def decorator(*args, **kwargs):
@@ -85,3 +86,19 @@ class TritonLanguagePlaceholder(types.ModuleType):
         self.log2 = None
         self.math = self.math = types.ModuleType("triton.language.math")
         self.math.exp2 = None
+
+
+class TritonTestingPlaceholder(types.ModuleType):
+    def __init__(self):
+        super().__init__("triton.testing")
+        self.do_bench = lambda *args, **kwargs: 0.0
+        self.Benchmark = self._dummy_decorator("Benchmark")
+        self.perf_report = self._dummy_decorator("perf_report")
+
+    def _dummy_decorator(self, name):
+        def decorator(*args, **kwargs):
+            if args and callable(args[0]):
+                return args[0]
+            return lambda f: f
+
+        return decorator

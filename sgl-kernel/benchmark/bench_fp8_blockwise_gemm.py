@@ -5,9 +5,10 @@ import os
 
 import deep_gemm
 import torch
-import triton
 from deep_gemm.utils.layout import get_mn_major_tma_aligned_tensor
 from sgl_kernel import fp8_blockwise_scaled_mm
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional vLLM import
 try:

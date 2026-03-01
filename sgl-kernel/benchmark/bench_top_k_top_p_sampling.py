@@ -4,8 +4,8 @@ import os
 import flashinfer.sampling
 import sgl_kernel
 import torch
-import triton
-import triton.testing
+
+from sglang.srt.triton_utils import testing, triton
 
 # CI environment detection
 IS_CI = (

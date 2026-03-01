@@ -2,9 +2,9 @@ import itertools
 
 import pytest
 import torch
-import triton
-import triton.language as tl
 from sgl_kernel import moe_align_block_size, moe_sum
+
+from sglang.srt.triton_utils import testing, tl, triton
 
 
 def is_hip() -> bool:

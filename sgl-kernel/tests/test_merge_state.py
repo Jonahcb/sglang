@@ -4,9 +4,9 @@ from typing import List
 
 import pytest
 import torch
-import triton
-import triton.language as tl
 from sgl_kernel import merge_state
+
+from sglang.srt.triton_utils import tl, triton
 
 
 def check_input(x: torch.Tensor):

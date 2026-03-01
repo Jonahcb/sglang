@@ -4,7 +4,8 @@ import os
 from typing import Callable, List, Tuple
 
 import torch
-import triton.testing
+
+from sglang.srt.triton_utils import triton
 
 # Common constants
 DEFAULT_DTYPE = torch.bfloat16

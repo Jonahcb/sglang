@@ -2,7 +2,6 @@
 import argparse
 
 import torch
-import triton
 from common_utils import get_model_config
 
 from sglang.srt.distributed.parallel_state import (
@@ -25,6 +24,7 @@ from sglang.srt.layers.moe.topk import (
     select_experts,
 )
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
+from sglang.srt.triton_utils import triton
 
 
 def fused_moe_triton_api(

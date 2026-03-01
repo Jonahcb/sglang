@@ -1,7 +1,6 @@
 import itertools
 
 import torch
-import triton.testing
 from sgl_kernel import rmsnorm
 
 from sglang.jit_kernel.benchmark.utils import (

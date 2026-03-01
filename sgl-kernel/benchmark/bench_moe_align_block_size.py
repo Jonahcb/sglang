@@ -3,9 +3,9 @@ import itertools
 import os
 
 import torch
-import triton
-import triton.language as tl
 from sgl_kernel import moe_align_block_size as sgl_moe_align_block_size
+
+from sglang.srt.triton_utils import testing, tl, triton
 
 try:
     from vllm import _custom_ops as ops

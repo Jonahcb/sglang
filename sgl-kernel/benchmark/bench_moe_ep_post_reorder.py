@@ -7,9 +7,8 @@ IS_CI = (
     os.getenv("CI", "false").lower() == "true"
     or os.getenv("GITHUB_ACTIONS", "false").lower() == "true"
 )
-import triton
-
 from sglang.srt.layers.moe.ep_moe.kernels import post_reorder_triton_kernel
+from sglang.srt.triton_utils import testing, triton
 
 # CI environment uses simplified parameters
 if IS_CI:

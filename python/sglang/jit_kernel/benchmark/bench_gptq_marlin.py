@@ -1,7 +1,6 @@
 import os
 
 import torch
-import triton.testing
 from sgl_kernel.scalar_type import scalar_types
 
 from sglang.jit_kernel.gptq_marlin import gptq_marlin_gemm as jit_gptq_marlin_gemm

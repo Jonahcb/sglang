@@ -5,9 +5,6 @@
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 import torch
-import torch.nn as nn
-import triton
-import triton.language as tl
 
 from sglang.srt.layers.attention.fla.chunk_delta_h import chunk_gated_delta_rule_fwd_h
 from sglang.srt.layers.attention.fla.cumsum import chunk_local_cumsum

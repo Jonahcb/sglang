@@ -2,8 +2,6 @@ from typing import Tuple
 
 import deep_gemm
 import torch
-import triton
-import triton.language as tl
 from deep_gemm import calc_diff
 from deep_gemm.utils.layout import get_mn_major_tma_aligned_tensor
 
@@ -12,6 +10,7 @@ from sglang.benchmark.kernels.deepseek.benchmark_deepgemm_fp8_gemm import (
     per_block_cast_to_fp8,
     per_token_cast_to_fp8,
 )
+from sglang.srt.triton_utils import tl, triton
 
 
 def construct_grouped_and_flat_fp8(

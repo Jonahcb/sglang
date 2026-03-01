@@ -2,7 +2,6 @@ import itertools
 from typing import Tuple
 
 import torch
-import triton.testing
 from sgl_kernel import rmsnorm
 
 from sglang.jit_kernel.benchmark.utils import is_in_ci

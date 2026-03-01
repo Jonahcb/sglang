@@ -2,7 +2,6 @@ import itertools
 from typing import Tuple
 
 import torch
-import triton.testing
 from sgl_kernel import set_kv_buffer_kernel
 
 from sglang.jit_kernel.benchmark.utils import (

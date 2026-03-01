@@ -2,9 +2,9 @@ from typing import Optional
 
 import pytest
 import torch
-import triton
-import triton.language as tl
 from sgl_kernel import merge_state, merge_state_v2
+
+from sglang.srt.triton_utils import testing, tl, triton
 
 
 @triton.jit

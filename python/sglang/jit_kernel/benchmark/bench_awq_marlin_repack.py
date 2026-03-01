@@ -2,7 +2,6 @@ import os
 
 import numpy as np
 import torch
-import triton.testing
 from sgl_kernel.scalar_type import scalar_types
 
 from sglang.jit_kernel.awq_marlin_repack import (

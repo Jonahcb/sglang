@@ -4,7 +4,6 @@ import deep_gemm
 import tilelang
 import tilelang.language as T
 import torch
-import triton
 from deep_gemm import ceil_div
 from deep_gemm.utils.layout import get_mn_major_tma_aligned_tensor
 from vllm.model_executor.layers.quantization.utils.fp8_utils import (
@@ -14,6 +13,7 @@ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
 from sglang.srt.layers.quantization.fp8_kernel import (
     w8a8_block_fp8_matmul_deepgemm as w8a8_block_fp8_matmul,
 )
+from sglang.srt.triton_utils import triton
 
 
 # Adapted from https://github.com/tile-ai/tilelang/blob/a8cfdce92795cb861c9033573534653ee040b5ed/examples/deepseek_deepgemm/example_deepgemm_fp8_2xAcc.py#L1

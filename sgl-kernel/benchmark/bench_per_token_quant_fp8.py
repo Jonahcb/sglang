@@ -3,9 +3,9 @@ import os
 from typing import Optional, Tuple
 
 import torch
-import triton
-import triton.testing
 from sgl_kernel import sgl_per_token_quant_fp8
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional vLLM import
 try:

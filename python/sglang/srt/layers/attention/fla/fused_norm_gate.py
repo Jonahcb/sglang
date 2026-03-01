@@ -4,9 +4,8 @@
 
 import torch
 import torch.nn as nn
-import triton
-import triton.language as tl
 
+from sglang.srt.triton_utils import tl, triton
 from sglang.srt.utils import (
     cdiv,
     cpu_has_amx_support,

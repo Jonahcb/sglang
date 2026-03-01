@@ -9,9 +9,9 @@ IS_CI = (
 
 import torch
 import torch.nn.functional as F
-import triton
-import triton.testing
 from sgl_kernel import dsv3_router_gemm
+
+from sglang.srt.triton_utils import testing, triton
 
 # CI environment uses simplified parameters
 if IS_CI:

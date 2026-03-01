@@ -3,9 +3,9 @@ import os
 from typing import List, Tuple
 
 import torch
-import triton
-import triton.testing
 from sgl_kernel import awq_dequantize
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional vLLM import
 try:

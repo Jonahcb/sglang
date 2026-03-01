@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-import triton
-import triton.testing
 from sgl_kernel import sgl_per_tensor_quant_fp8
+
+from sglang.srt.triton_utils import testing, triton
 
 # Optional imports
 try:
