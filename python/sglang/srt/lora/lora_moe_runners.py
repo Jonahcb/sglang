@@ -467,10 +467,10 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         if lora_info.max_lora_rank == 0:
             return
 
-        actual_max_lora_rank = lora_info.max_lora_rank
-
         lora_a_stacked = [lora_info.gate_up_lora_a_weights]
         lora_b_stacked = [lora_info.gate_up_lora_b_weights]
+
+        actual_max_lora_rank = lora_a_stacked[0].shape[-2]
 
         fused_moe_lora(
             output=intermediate_cache,
@@ -528,10 +528,10 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         if lora_info.max_lora_rank == 0:
             return
 
-        actual_max_lora_rank = lora_info.max_lora_rank
-
         lora_a_stacked = [lora_info.down_lora_a_weights]
         lora_b_stacked = [lora_info.down_lora_b_weights]
+
+        actual_max_lora_rank = lora_a_stacked[0].shape[-2]
 
         fused_moe_lora(
             output=intermediate_cache,
