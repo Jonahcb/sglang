@@ -4,7 +4,7 @@ import pytest
 import torch
 from sgl_kernel import moe_align_block_size, moe_sum
 
-from sglang.srt.triton_utils import testing, tl, triton
+from sglang.srt.triton_utils import tl, triton
 
 
 def is_hip() -> bool:

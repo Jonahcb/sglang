@@ -10,7 +10,7 @@ from sgl_kernel import (
     qserve_w4a8_per_group_gemm,
 )
 
-from sglang.srt.triton_utils import testing, triton
+from sglang.srt.triton_utils import triton
 
 # CI environment detection
 IS_CI = (

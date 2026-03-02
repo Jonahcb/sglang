@@ -6,7 +6,7 @@ import os
 import torch
 from sgl_kernel import int8_scaled_mm
 
-from sglang.srt.triton_utils import testing, triton
+from sglang.srt.triton_utils import triton
 
 # Optional vLLM import
 try:

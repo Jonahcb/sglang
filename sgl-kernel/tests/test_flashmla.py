@@ -10,7 +10,7 @@ from sgl_kernel.flash_mla import (
     get_mla_metadata,
 )
 
-from sglang.srt.triton_utils import testing, triton
+from sglang.srt.triton_utils import triton
 
 # ================ prefill usage ================ #
 S_Q_PREFILL = [1, 62]

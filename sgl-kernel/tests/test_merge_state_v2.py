@@ -4,7 +4,7 @@ import pytest
 import torch
 from sgl_kernel import merge_state, merge_state_v2
 
-from sglang.srt.triton_utils import testing, tl, triton
+from sglang.srt.triton_utils import tl, triton
 
 
 @triton.jit

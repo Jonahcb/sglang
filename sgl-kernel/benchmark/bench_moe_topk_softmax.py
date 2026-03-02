@@ -5,7 +5,7 @@ import pytest
 import torch
 from sgl_kernel import topk_softmax
 
-from sglang.srt.triton_utils import testing, triton
+from sglang.srt.triton_utils import triton
 
 # Optional vLLM import
 try:

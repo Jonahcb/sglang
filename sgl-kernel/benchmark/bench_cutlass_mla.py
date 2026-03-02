@@ -6,7 +6,7 @@ import os
 import torch
 from sgl_kernel import cutlass_mla_decode, cutlass_mla_get_workspace_size
 
-from sglang.srt.triton_utils import testing, triton
+from sglang.srt.triton_utils import triton
 from sglang.srt.utils import get_device_capability
 
 # CI environment detection

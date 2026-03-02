@@ -5,7 +5,7 @@ import pytest
 import torch
 from sgl_kernel import topk_sigmoid
 
-from sglang.srt.triton_utils import testing, triton
+from sglang.srt.triton_utils import triton
 
 # CI environment detection
 IS_CI = (

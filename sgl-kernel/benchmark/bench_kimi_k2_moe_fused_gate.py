@@ -6,7 +6,7 @@ import torch
 from sgl_kernel import kimi_k2_moe_fused_gate
 
 from sglang.srt.layers.moe.topk import kimi_k2_biased_topk_impl
-from sglang.srt.triton_utils import testing, tl, triton
+from sglang.srt.triton_utils import tl, triton
 
 # CI environment detection
 IS_CI = (
