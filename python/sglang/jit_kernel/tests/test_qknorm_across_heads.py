@@ -73,4 +73,4 @@ def test_qknorm_across_heads(batch_size: int, hidden_dim: int) -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    pytest.main([__file__, "-v", "-s"])
