@@ -27,10 +27,25 @@ from sglang.srt.layers.moe.token_dispatcher.standard import StandardDispatchOutp
 from sglang.srt.layers.moe.topk import StandardTopKOutput
 from sglang.srt.layers.moe.utils import MoeRunnerBackend
 from sglang.srt.lora.lora_moe_runners import LoRAInfo
-from sglang.srt.utils import set_random_seed
+from sglang.srt.utils import get_device, set_random_seed
 from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=80, suite="stage-b-test-large-1-gpu")
+
+
+def create_random_gpu_tensor(shape, dtype, mean=0, std=0.01):
+    """Create a random Torch(device) tensor
+
+    Args:
+        shape: Tensor shape
+        dtype: Data type
+        mean: Mean value
+        std: Standard deviation
+
+    Returns:
+        torch.Tensor: Randomly initialized Torch(device) tensor
+    """
+    return torch.empty(shape, dtype=dtype, device=get_device()).normal_(mean, std)
 
 
 def generate_request_data(
@@ -122,46 +137,36 @@ def create_lora_info(
     device,
 ):
     # -------------------------------------------------------------------------
-    # 1. Deterministic LoRA A Initialization
+    # 1. Random LoRA A Initialization
     # -------------------------------------------------------------------------
 
-    val_gate_up_a = 0.1
-    gate_up_lora_a_weights = torch.full(
+    gate_up_lora_a_weights = create_random_gpu_tensor(
         (max_loras, num_experts, max_lora_rank * 2, hidden_dim),
-        val_gate_up_a,
-        dtype=dtype,
-        device=device,
+        dtype,
+        mean=0,
+        std=0.01,
     )
 
-    val_down_a = 1.0 / intermediate_dim
-    down_lora_a_weights = torch.full(
+    down_lora_a_weights = create_random_gpu_tensor(
         (max_loras, num_experts, max_lora_rank, intermediate_dim),
-        val_down_a,
-        dtype=dtype,
-        device=device,
+        dtype,
+        mean=0,
+        std=0.01,
     )
 
     # -------------------------------------------------------------------------
-    # 2. Deterministic LoRA B Initialization
+    # 2. Random LoRA B Initialization
     # -------------------------------------------------------------------------
-    base_target = 0.05
 
-    gate_up_lora_b_weights = torch.zeros(
+    gate_up_lora_b_weights = create_random_gpu_tensor(
         (max_loras, num_experts, gate_up_dim, max_lora_rank),
-        dtype=dtype,
-        device=device,
+        dtype,
+        mean=0,
+        std=0.01,
     )
-    down_lora_b_weights = torch.zeros(
-        (max_loras, num_experts, hidden_dim, max_lora_rank), dtype=dtype, device=device
+    down_lora_b_weights = create_random_gpu_tensor(
+        (max_loras, num_experts, hidden_dim, max_lora_rank), dtype, mean=0, std=0.01
     )
-
-    for i in range(num_experts):
-        expert_multiplier = i + 1
-        divisor = max(1, max_lora_rank)
-        fill_val = (base_target * expert_multiplier) / divisor
-
-        gate_up_lora_b_weights[:, i, :, :] = fill_val
-        down_lora_b_weights[:, i, :, :] = fill_val
 
     # -------------------------------------------------------------------------
     # 3. Setup Metadata
@@ -329,12 +334,18 @@ def test_lora_moe_runner_multi_expert(
     gate_up_dim = intermediate_dim * 2
 
     # Initialize experts
-    w13 = torch.randn(num_experts, gate_up_dim, hidden_dim, dtype=dtype) * 0.1
-    w2 = torch.randn(num_experts, hidden_dim, intermediate_dim, dtype=dtype) * 0.1
-    b13 = torch.randn(num_experts, gate_up_dim, dtype=dtype) * 0.1
-    b2 = torch.randn(num_experts, hidden_dim, dtype=dtype) * 0.1
+    w13 = create_random_gpu_tensor(
+        (num_experts, gate_up_dim, hidden_dim), dtype, mean=0, std=0.1
+    )
+    w2 = create_random_gpu_tensor(
+        (num_experts, hidden_dim, intermediate_dim), dtype, mean=0, std=0.1
+    )
+    b13 = create_random_gpu_tensor((num_experts, gate_up_dim), dtype, mean=0, std=0.1)
+    b2 = create_random_gpu_tensor((num_experts, hidden_dim), dtype, mean=0, std=0.1)
 
-    hidden_states = torch.randn(num_tokens, hidden_dim, dtype=dtype)
+    hidden_states = create_random_gpu_tensor(
+        (num_tokens, hidden_dim), dtype, mean=0, std=1
+    )
 
     # Create LoRA Info using the new fields
     lora_info_delta = create_lora_info(
@@ -456,13 +467,9 @@ def test_lora_moe_runner_multi_expert(
     sglang_delta = output_with_lora - output_baseline
     torch_delta = torch_output_lora - torch_output_base
 
-    diff = sglang_delta - torch_delta
+    rtol, atol = 1e-1, 1e-2
 
-    # Assert that the average logprob diff is not greater than 0.02
-    avg_diff = torch.mean(torch.abs(diff))
-    assert (
-        avg_diff <= 0.52
-    ), f"Average logprob diff {avg_diff:.6f} exceeds threshold 0.52"
+    torch.testing.assert_close(sglang_delta, torch_delta, rtol=rtol, atol=atol)
 
 
 if __name__ == "__main__":
