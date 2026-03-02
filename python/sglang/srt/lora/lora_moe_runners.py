@@ -480,7 +480,10 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         # Using num_slices=2 lets the kernel handle gate and up independently,
         # keeping the rank dimension at r so shrink and expand both match.
         lora_a_stacked = [gate_up_a[:, :, :r, :], gate_up_a[:, :, r : 2 * r, :]]
-        lora_b_stacked = [gate_up_b[:, :, :inter_size, :], gate_up_b[:, :, inter_size:, :]]
+        lora_b_stacked = [
+            gate_up_b[:, :, :inter_size, :],
+            gate_up_b[:, :, inter_size:, :],
+        ]
 
         fused_moe_lora(
             output=intermediate_cache,
