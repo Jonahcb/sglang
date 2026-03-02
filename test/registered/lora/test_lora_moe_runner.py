@@ -147,7 +147,7 @@ def create_lora_info(
     base_target = 0.05
 
     gate_up_lora_b_weights = torch.zeros(
-        (max_loras, num_experts, gate_up_dim, max_lora_rank * 2),
+        (max_loras, num_experts, gate_up_dim, max_lora_rank),
         dtype=dtype,
         device=device,
     )
@@ -232,19 +232,25 @@ def torch_naive_moe_with_lora(
     gate_up_out = gate_up_out.view(num_tokens, top_k, -1)
 
     # 1.5. LoRA Gate/Up Delta
+    # gate_up_lora_a is packed as [gate_a; up_a] along rank dim → [2*r, hidden_dim]
+    # gate_up_lora_b is packed as [gate_b; up_b] along output dim → [2*inter, r]
+    # Correct computation splits them: gate uses first r rows of A with first half of B,
+    # up uses last r rows of A with second half of B.
     if lora_info.max_lora_rank > 0:
+        r = lora_info.max_lora_rank
         for i in range(num_tokens):
             for k in range(top_k):
                 expert_id = topk_ids[i, k]
-                lora_id = token_lora_mapping[i]  # Use explicit mapping
+                lora_id = token_lora_mapping[i]
 
-                # Check if this adapter is enabled/valid
                 if lora_id < len(lora_info.lora_ranks):
                     lora_a = lora_info.gate_up_lora_a_weights[lora_id, expert_id]
                     lora_b = lora_info.gate_up_lora_b_weights[lora_id, expert_id]
+                    half = lora_b.shape[0] // 2
                     lora_a_result = lora_a @ hidden_states[i]
-                    lora_b_result = lora_b @ lora_a_result
-                    gate_up_out[i, k] += lora_b_result
+                    gate_delta = lora_b[:half, :] @ lora_a_result[:r]
+                    up_delta = lora_b[half:, :] @ lora_a_result[r:]
+                    gate_up_out[i, k] += torch.cat([gate_delta, up_delta])
 
     # 2. Activation
     gate_up_dim = gate_up_out.shape[-1]

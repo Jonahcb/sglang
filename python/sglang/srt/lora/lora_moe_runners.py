@@ -467,10 +467,20 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         if lora_info.max_lora_rank == 0:
             return
 
-        lora_a_stacked = [lora_info.gate_up_lora_a_weights]
-        lora_b_stacked = [lora_info.gate_up_lora_b_weights]
+        r = lora_info.max_lora_rank
+        gate_up_a = lora_info.gate_up_lora_a_weights
+        gate_up_b = lora_info.gate_up_lora_b_weights
+        inter_size = gate_up_b.shape[2] // 2
 
-        actual_max_lora_rank = lora_a_stacked[0].shape[-2]
+        # Split packed gate_up weights into separate gate and up slices.
+        # gate_up_lora_a has shape [max_loras, num_experts, 2*r, hidden_dim]
+        # where the first r rows are gate_lora_a and the next r are up_lora_a.
+        # gate_up_lora_b has shape [max_loras, num_experts, 2*inter_size, r]
+        # where the first inter_size rows are gate_lora_b and the rest up_lora_b.
+        # Using num_slices=2 lets the kernel handle gate and up independently,
+        # keeping the rank dimension at r so shrink and expand both match.
+        lora_a_stacked = [gate_up_a[:, :, :r, :], gate_up_a[:, :, r : 2 * r, :]]
+        lora_b_stacked = [gate_up_b[:, :, :inter_size, :], gate_up_b[:, :, inter_size:, :]]
 
         fused_moe_lora(
             output=intermediate_cache,
@@ -481,7 +491,7 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
             sorted_token_ids=sorted_token_ids_reshaped,
             expert_ids=expert_ids_reshaped,
             num_tokens_post_padded=num_tokens_post_padded_lora,
-            max_lora_rank=actual_max_lora_rank,
+            max_lora_rank=r,
             top_k_num=top_k,
             lora_ids=lora_ids,
             adapter_enabled=lora_info.adapter_enabled,
@@ -531,8 +541,6 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         lora_a_stacked = [lora_info.down_lora_a_weights]
         lora_b_stacked = [lora_info.down_lora_b_weights]
 
-        actual_max_lora_rank = lora_a_stacked[0].shape[-2]
-
         fused_moe_lora(
             output=intermediate_cache,
             qcurr_hidden_states=intermediate_input,
@@ -542,7 +550,7 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
             sorted_token_ids=sorted_token_ids_reshaped,
             expert_ids=expert_ids_reshaped,
             num_tokens_post_padded=num_tokens_post_padded_lora,
-            max_lora_rank=actual_max_lora_rank,
+            max_lora_rank=lora_info.max_lora_rank,
             top_k_num=top_k,
             lora_ids=lora_ids,
             adapter_enabled=lora_info.adapter_enabled,
