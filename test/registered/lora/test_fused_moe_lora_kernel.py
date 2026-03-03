@@ -233,10 +233,11 @@ def use_torch(
     mul_routed_weight,
 ):
     outputs = []
-
-    # Capture the original dtype so we can downcast at the very end
     orig_dtype = hidden_states.dtype
-    for i in range(hidden_states.shape[0]):
+
+    num_tokens = topk_ids.shape[0]
+
+    for i in range(num_tokens):
         lora_idx = token_lora_mapping[i]
         expert_ids = topk_ids[i]
         expert_weights = topk_weights[i]
@@ -244,22 +245,25 @@ def use_torch(
         lora_a = lora_a_stacked[0][lora_idx][expert_ids]
         lora_b = lora_b_stacked[0][lora_idx][expert_ids]
 
-        # Cast inputs to float32 to mimic Triton's fp32 accumulator
-        h_f32 = hidden_states[i].to(torch.float32)
         la_f32 = lora_a.to(torch.float32)
         lb_f32 = lora_b.to(torch.float32)
 
         if mul_routed_weight:
-            tensors = [
-                ((h_f32 @ la_f32[x].T @ lb_f32[x].T) * expert_weights[x]).to(orig_dtype)
-                for x in range(top_k_num)
-            ]
+            tensors = []
+            for x in range(top_k_num):
+                h_f32 = hidden_states[i * top_k_num + x].to(torch.float32)
+                res = ((h_f32 @ la_f32[x].T @ lb_f32[x].T) * expert_weights[x]).to(
+                    orig_dtype
+                )
+                tensors.append(res)
         else:
+            h_f32 = hidden_states[i].to(torch.float32)
             tensors = [
                 (h_f32 @ la_f32[x].T @ lb_f32[x].T).to(orig_dtype)
                 for x in range(top_k_num)
             ]
         outputs.append(torch.stack(tensors, dim=0))
+
     return torch.stack(outputs, dim=0)
 
 
@@ -310,6 +314,8 @@ def test_fused_moe_lora_kernel(
     seg_indptr = seg_indptr.to(device)
     req_to_lora = req_to_lora.to(device)
 
+    input_rows = num_tokens * top_k_num if mul_routed_weight else num_tokens
+
     # init lora weights
     lora_a_stacked = [
         torch.rand(
@@ -337,7 +343,7 @@ def test_fused_moe_lora_kernel(
     ]
     hidden_states = torch.rand(
         (
-            num_tokens,
+            input_rows,
             K,
         ),
         dtype=dtype,
