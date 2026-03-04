@@ -81,3 +81,10 @@ repos:
         language: system
         files: ^\.github/CI_PERMISSIONS\.json$
         pass_filenames: false
+      - id: no-direct-triton-imports
+        name: disallow direct triton imports
+        entry: python3 scripts/lint/check_direct_triton_imports.py
+        language: system
+        files: \.py$
+        exclude: ^python/sglang/srt/triton_utils/
+        pass_filenames: false
