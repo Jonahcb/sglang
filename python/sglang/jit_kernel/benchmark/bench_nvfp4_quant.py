@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import torch
-import triton
 
 from sglang.jit_kernel.benchmark.utils import get_benchmark_range, run_benchmark
 from sglang.jit_kernel.nvfp4 import scaled_fp4_quant
+from sglang.srt.triton_utils import triton
 
 FLOAT4_E2M1_MAX = 6.0
 FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
