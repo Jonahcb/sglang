@@ -25,49 +25,55 @@ SCAN_ROOTS = [
 ]
 
 
+class TritonImportChecker(ast.NodeVisitor):
+    def __init__(self, filename):
+        self.filename = filename
+        self.errors = []
+        self._in_try_block = 0
+
+    def visit_Try(self, node):
+        self._in_try_block += 1
+        self.generic_visit(node)
+        self._in_try_block -= 1
+
+    def _check_triton(self, name, lineno, is_from=False):
+        if self._in_try_block > 0:
+            return
+
+        if name == "triton" or name.startswith("triton."):
+            msg_type = f"from {name} import ..." if is_from else f"import {name}"
+            self.errors.append(f"{self.filename}:{lineno}: direct `{msg_type}` found")
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            self._check_triton(alias.name, node.lineno)
+
+    def visit_ImportFrom(self, node):
+        if node.module:
+            self._check_triton(node.module, node.lineno, is_from=True)
+
+
 def main() -> int:
     errors: list[str] = []
 
     for root in SCAN_ROOTS:
         root_path = pathlib.Path(root)
-        if not root_path.exists():
-            continue
+        if not root_path.is_dir():
+            raise NotADirectoryError(f"Required directory not found: {root_path}")
         for p in root_path.rglob("*.py"):
             if any(str(p).startswith(a) for a in ALLOWED):
                 continue
             try:
-                source = p.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            try:
+                source = p.read_bytes()
                 tree = ast.parse(source, filename=str(p))
-            except SyntaxError:
+            except (OSError, SyntaxError):
+                # I think we should continue here because these other issues should be caught by other linting tools
                 continue
 
-            # Collect import node ids that are inside try/except blocks —
-            # those are guarded and won't break Triton-free environments.
-            guarded: set[int] = set()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Try):
-                    for child in ast.walk(node):
-                        if isinstance(child, (ast.Import, ast.ImportFrom)):
-                            guarded.add(id(child))
-
-            for node in ast.walk(tree):
-                if id(node) in guarded:
-                    continue
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name == "triton" or alias.name.startswith("triton."):
-                            errors.append(
-                                f"{p}:{node.lineno}: direct `import {alias.name}` found"
-                            )
-                elif isinstance(node, ast.ImportFrom) and node.module and (
-                    node.module == "triton" or node.module.startswith("triton.")
-                ):
-                    errors.append(
-                        f"{p}:{node.lineno}: direct `from {node.module} import ...` found"
-                    )
+            # Run the AST visitor
+            checker = TritonImportChecker(str(p))
+            checker.visit(tree)
+            errors.extend(checker.errors)
 
     if errors:
         print(
