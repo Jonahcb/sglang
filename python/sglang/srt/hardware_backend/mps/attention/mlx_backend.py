@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import math
 
 import mlx.core
+from torch.utils import dlpack
 from mlx.core.fast import scaled_dot_product_attention
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.radix_attention import AttentionType
@@ -229,6 +230,11 @@ class MPSMLXNativeAttnBackend(AttentionBackend):
         forward_batch: ForwardBatch,
         save_kv_cache=True,
     ):
+        # Convert from torch tensor to mlx array using zero-copy
+        # TODO (Jonahcb): determine whether this is creating a copy or not
+        q = mlx.core.array(q)
+        k = mlx.core.array(dlpack.to_dlpack(k))
+        v = mlx.core.array(dlpack.to_dlpack(v))
         if layer.qk_head_dim != layer.v_head_dim:
             o = mlx.core.zeros((q.shape[0], layer.tp_q_head_num * layer.v_head_dim), dtype=q.dtype)
         else:
