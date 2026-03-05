@@ -1,4 +1,17 @@
 # SGLang public APIs
+import sys as _sys
+
+if _sys.platform == "darwin":
+    try:
+        import torch as _torch
+        if _torch.backends.mps.is_available():
+            from sglang._mps_stub import install as _install_mps_stub
+            _install_mps_stub()
+            del _install_mps_stub
+        del _torch
+    except ImportError:
+        pass
+del _sys
 
 # Frontend Language APIs
 from sglang.global_config import global_config

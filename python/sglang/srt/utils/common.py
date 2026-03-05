@@ -196,6 +196,10 @@ def is_musa() -> bool:
     return hasattr(torch.version, "musa") and torch.version.musa is not None
 
 
+def is_mps() -> bool:
+    return torch.mps.is_available()
+
+
 def is_float4_e2m1fn_x2(dtype) -> bool:
     """Check if dtype is float4_e2m1fn_x2 and CUDA is available."""
     target_dtype = getattr(torch, "float4_e2m1fn_x2", None)
@@ -375,7 +379,7 @@ def get_float_env_var(name: str, default: float = 0.0) -> float:
 
 
 def support_triton(backend: str) -> bool:
-    return backend not in ["torch_native", "intel_amx"]
+    return backend not in ["torch_native", "intel_amx", "mlx"]
 
 
 _ENABLE_TORCH_INFERENCE_MODE = get_bool_env_var(
@@ -598,7 +602,8 @@ def get_available_gpu_memory(
             # memory metric instead.
             free_gpu_memory = psutil.virtual_memory().available
         free_gpu_memory, total_gpu_memory = torch.musa.mem_get_info()
-
+    elif device == "mps":
+        free_gpu_memory = psutil.virtual_memory().available
     if distributed:
         tensor = torch.tensor(free_gpu_memory, dtype=torch.float32)
         torch.distributed.all_reduce(
@@ -2060,7 +2065,12 @@ def get_device(device_id: Optional[int] = None) -> str:
             return "musa"
         return "musa:{}".format(device_id)
 
-    raise RuntimeError("No accelerator (CUDA, XPU, HPU, NPU, MUSA) is available.")
+    if is_mps():
+        if device_id == None:
+            return "mps"
+        return "mps:{}".format(device_id)
+
+    raise RuntimeError("No accelerator (CUDA, XPU, HPU, NPU, MUSA, MPS) is available.")
 
 
 @lru_cache(maxsize=1)

@@ -240,3 +240,10 @@ def create_intel_xpu_backend(runner):
     from sglang.srt.layers.attention.xpu_backend import XPUAttentionBackend
 
     return XPUAttentionBackend(runner)
+
+
+@register_attention_backend("mlx")
+def create_mlx_backend(runner):
+    from sglang.srt.hardware_backend.mps.attention.mlx_backend import MPSMLXNativeAttnBackend
+
+    return MPSMLXNativeAttnBackend(runner)

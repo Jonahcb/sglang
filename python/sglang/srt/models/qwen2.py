@@ -51,7 +51,9 @@ from sglang.srt.model_loader.weight_utils import (
     kv_cache_scales_loader,
 )
 from sglang.srt.server_args import get_global_server_args
-from sglang.srt.utils import add_prefix, make_layers
+from sglang.srt.utils import add_prefix, make_layers, is_mps
+
+_is_mps = is_mps()
 
 Qwen2Config = None
 
@@ -650,5 +652,6 @@ class Qwen2ForCausalLM(nn.Module):
         else:
             self.model.layers_to_capture = [val + 1 for val in layer_ids]
 
+if not _is_mps:
+    EntryClass = Qwen2ForCausalLM
 
-EntryClass = Qwen2ForCausalLM

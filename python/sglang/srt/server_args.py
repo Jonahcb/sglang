@@ -51,6 +51,7 @@ from sglang.srt.utils.common import (
     is_flashinfer_available,
     is_hip,
     is_hopper_with_cuda_12_3,
+    is_mps,
     is_no_spec_infer_or_topk_one,
     is_npu,
     is_remote_url,
@@ -141,6 +142,7 @@ ATTENTION_BACKEND_CHOICES = [
     "intel_amx",
     "ascend",
     "intel_xpu",
+    "mlx",
 ]
 
 LORA_BACKEND_CHOICES = ["triton", "csgmv", "ascend", "torch_native"]
@@ -930,7 +932,7 @@ class ServerArgs:
         if self.pp_size > 1:
             self.disable_piecewise_cuda_graph = True
         # 6. Non-CUDA hardware (AMD, NPU, CPU, etc.)
-        if is_hip() or is_npu() or is_cpu():
+        if is_hip() or is_npu() or is_cpu() or is_mps():
             self.disable_piecewise_cuda_graph = True
         # 7. MoE A2A backend
         if self.moe_a2a_backend != "none":
@@ -1939,6 +1941,8 @@ class ServerArgs:
                 return "trtllm_mha"
             elif is_hip():
                 return "aiter"
+            elif is_mps():
+                return "mlx"
             else:
                 return "flashinfer" if is_flashinfer_available() else "triton"
         else:
