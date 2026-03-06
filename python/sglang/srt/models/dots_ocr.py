@@ -19,7 +19,8 @@ from sglang.srt.managers.schedule_batch import MultimodalDataItem, MultimodalInp
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.dots_vlm_vit import DotsVisionTransformer
-from sglang.srt.models.qwen2 import Qwen2ForCausalLM
+from python.sglang.srt.hardware_backend.mps.models.qwen2_mlx.py import Qwen2ForCausalLM
+#from sglang.srt.models.qwen2 import Qwen2ForCausalLM
 from sglang.srt.utils import add_prefix
 
 logger = logging.getLogger(__name__)

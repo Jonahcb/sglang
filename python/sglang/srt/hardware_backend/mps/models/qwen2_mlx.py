@@ -21,7 +21,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn
-from transformers import PretrainedConfig
+from mlx.utils import tree_flatten, tree_unflatten
+from sglang.srt.hardware_backend.mps.attention.mlx_radixattention import MLXRadixAttention
+import torch
 
 from sglang.srt.distributed import (
     get_pp_group,
@@ -30,13 +32,12 @@ from sglang.srt.distributed import (
 )
 from sglang.srt.layers.activation import SiluAndMul
 from sglang.srt.layers.dp_attention import is_dp_attention_enabled
-from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.layers.linear import (
     MergedColumnParallelLinear,
     QKVParallelLinear,
     RowParallelLinear,
 )
-from sglang.srt.layers.logits_processor import LogitsProcessor
+from sglang.srt.hardware_backend.mps.mlx_logits_processor import MLXLogitsProcessor
 from sglang.srt.layers.pooler import Pooler, PoolingType
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.radix_attention import RadixAttention
@@ -48,15 +49,15 @@ from sglang.srt.layers.vocab_parallel_embedding import (
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_loader.weight_utils import (
-    default_weight_loader,
     kv_cache_scales_loader,
 )
 from sglang.srt.server_args import get_global_server_args
-from sglang.srt.utils import add_prefix, make_layers, is_mps
+from sglang.srt.utils import add_prefix, is_mps
+from sglang.srt.hardware_backend.mps.utils import make_layers_non_pp, default_mlx_weight_loader
 
 _is_mps = is_mps()
 
-Qwen2Config = PretrainedConfig
+Qwen2Config = None
 
 
 logger = logging.getLogger(__name__)
@@ -93,11 +94,11 @@ class Qwen2MLP(nn.Module):
         if get_global_server_args().rl_on_policy_target is not None:
             x = x.bfloat16()
 
-        gate_up, _ = self.gate_up_proj(x)
+        gate_up = self.gate_up_proj(x)
         d = gate_up.shape[-1] // 2
         # SwiGLU: silu(gate) * up
         x = self.act_fn(gate_up[..., :d]) * gate_up[..., d:]
-        x, _ = self.down_proj(x)
+        x = self.down_proj(x)
         return x
 
 
@@ -158,7 +159,17 @@ class Qwen2Attention(nn.Module):
             traditional=False,
             base=rope_theta,
         )
-        self.attn = RadixAttention(
+        # TODO (Jonahcb): investigate why 'RadixAttention' was needed between here and the actual AttentionBackend.
+        # self.attn = RadixAttention(
+        #     self.num_heads,
+        #     self.head_dim,
+        #     self.scaling,
+        #     num_kv_heads=self.num_kv_heads,
+        #     layer_id=layer_id,
+        #     quant_config=quant_config,
+        #     prefix=add_prefix("attn", prefix),
+        # )
+        self.attn = MLXRadixAttention(
             self.num_heads,
             self.head_dim,
             self.scaling,
@@ -168,17 +179,29 @@ class Qwen2Attention(nn.Module):
             prefix=add_prefix("attn", prefix),
         )
 
+
     def __call__(
         self,
         positions: mx.array,
         hidden_states: mx.array,
         forward_batch: ForwardBatch,
     ) -> mx.array:
-        qkv, _ = self.qkv_proj(hidden_states)
+        qkv = self.qkv_proj(hidden_states)
         q, k, v = mx.split(qkv, [self.q_size, self.q_size + self.kv_size], axis=-1)
-        q, k = self.rotary_emb(positions, q, k)
+        # TODO (Jonahcb): fix this in a cleaner way
+        # self.rotary_emb expects shape = [batch_size, seq_len, features], but we squeezed out batch_size somewhere (probably in the attention backend)
+        q = mx.expand_dims(q, axis=0)
+        k = mx.expand_dims(k, axis=0)
+        # TODO (Jonahcb): make sure this is due to prefill and not continuous batching
+        # MLX RoPE doesn't want a tensor with the starting position of every token, just the starting index of the first token
+        #q = self.rotary_emb(q, offset=positions)
+        #k = self.rotary_emb(k, offset=positions)
+        print(positions)
+        q = self.rotary_emb(q, offset=positions[0])
+        k = self.rotary_emb(k, offset=positions[0])
+        #q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v, forward_batch)
-        output, _ = self.o_proj(attn_output)
+        output = self.o_proj(attn_output)
         return output
 
 
@@ -220,8 +243,8 @@ class Qwen2DecoderLayer(nn.Module):
             quant_config=quant_config,
             prefix=add_prefix("mlp", prefix),
         )
-        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(
+        self.input_layernorm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = nn.RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
@@ -234,10 +257,14 @@ class Qwen2DecoderLayer(nn.Module):
     ) -> Tuple[mx.array, mx.array]:
         # Self Attention
         if residual is None:
+            # Typically happens at layer 0 (hidden_states is the raw embeddings)
             residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            # Add the MLP output from the previous layer to our accumulated residual
+            residual = hidden_states + residual
+            
+        # Apply layer norm to the accumulated residual
+        hidden_states = self.input_layernorm(residual)
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
@@ -245,7 +272,9 @@ class Qwen2DecoderLayer(nn.Module):
         )
 
         # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+        # TODO (Jonahcb): make sure I changed this residual calculation correctly
+        residual = hidden_states + residual
+        hidden_states = self.post_attention_layernorm(residual)
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
@@ -263,22 +292,17 @@ class Qwen2Model(nn.Module):
         self.config = config
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.pp_group = get_pp_group()
 
-        if self.pp_group.is_first_rank:
-            self.embed_tokens = VocabParallelEmbedding(
-                config.vocab_size,
-                config.hidden_size,
-                quant_config=quant_config,
-                use_attn_tp_group=is_dp_attention_enabled(),
-                prefix=add_prefix("embed_tokens", prefix),
-            )
-        else:
-            self.embed_tokens = PPMissingLayer()
+
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size,
+            config.hidden_size
+        )
+
 
         # Use the provided decoder layer type or default to Qwen2DecoderLayer
         decoder_layer_type = decoder_layer_type or Qwen2DecoderLayer
-        self.layers, self.start_layer, self.end_layer = make_layers(
+        self.layers = make_layers_non_pp(
             config.num_hidden_layers,
             lambda idx, prefix: decoder_layer_type(
                 layer_id=idx,
@@ -287,14 +311,11 @@ class Qwen2Model(nn.Module):
                 prefix=prefix,
                 alt_stream=alt_stream,
             ),
-            pp_rank=self.pp_group.rank_in_group,
-            pp_size=self.pp_group.world_size,
             prefix=add_prefix("layers", prefix),
         )
-        if self.pp_group.is_last_rank:
-            self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        else:
-            self.norm = PPMissingLayer(return_tuple=True)
+        self.start_layer = 0
+        self.end_layer = config.num_hidden_layers
+        self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         # For EAGLE3 support
         self.layers_to_capture = []
@@ -317,16 +338,13 @@ class Qwen2Model(nn.Module):
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
     ) -> Union[mx.array, PPProxyTensors]:
 
-        if self.pp_group.is_first_rank:
-            if input_embeds is None:
-                hidden_states = self.embed_tokens(input_ids)
-            else:
-                hidden_states = input_embeds
-            residual = None
+        if input_embeds is None:
+            print(type(input_ids))
+            hidden_states = self.embed_tokens(input_ids)
         else:
-            assert pp_proxy_tensors is not None
-            hidden_states = pp_proxy_tensors["hidden_states"]
-            residual = pp_proxy_tensors["residual"]
+            hidden_states = input_embeds
+        residual = None
+
 
         aux_hidden_states = []
         for i in range(self.start_layer, self.end_layer):
@@ -341,19 +359,13 @@ class Qwen2Model(nn.Module):
                 forward_batch,
                 residual,
             )
-        if not self.pp_group.is_last_rank:
-            return PPProxyTensors(
-                {
-                    "hidden_states": hidden_states,
-                    "residual": residual,
-                }
-            )
-        else:
-            if hidden_states.shape[0] != 0:
-                if residual is None:
-                    hidden_states = self.norm(hidden_states)
-                else:
-                    hidden_states, _ = self.norm(hidden_states, residual)
+
+        if hidden_states.shape[0] != 0:
+            if residual is None:
+                hidden_states = self.norm(hidden_states)
+            else:
+                hidden_states = hidden_states + residual # TODO (Jonahcb): I added this so check that is works properly
+                hidden_states = self.norm(hidden_states)
 
         if len(aux_hidden_states) == 0:
             return hidden_states
@@ -414,7 +426,7 @@ class Qwen2ForCausalLM(nn.Module):
             # ranks other than the last rank will have a placeholder layer
             self.lm_head = PPMissingLayer()
 
-        self.logits_processor = LogitsProcessor(config)
+        self.logits_processor = MLXLogitsProcessor(config)
         self.pooler = Pooler(pooling_type=PoolingType.LAST, normalize=True)
         # For EAGLE3 support
         self.capture_aux_hidden_states = False
@@ -507,9 +519,19 @@ class Qwen2ForCausalLM(nn.Module):
     def end_layer(self):
         return self.model.end_layer
 
+    # This has been completely rewritten to work with our naive and basic MLX forward pass, instead of SGLang's custom forward pass
+    # We got rid of Pipeline Parallelism and sharding support
+    # TODO (Jonahcb): we can probably optimize this loading logic
     def load_weights(self, weights: Iterable[Tuple[str, Any]]):
+        # This will hold the final MLX-compatible dictionary of weights
+        processed_weights = {}
+        
+        # Buffers to hold Q/K/V and Gate/Up before concatenation
+        # Format: {"target_param_name": {"shard_id": array}}
+        stacked_buffers = {}
+
         stacked_params_mapping = [
-            # (param_name, shard_name, shard_id)
+            # (param_name, weight_name, shard_id)
             ("qkv_proj", "q_proj", "q"),
             ("qkv_proj", "k_proj", "k"),
             ("qkv_proj", "v_proj", "v"),
@@ -517,63 +539,78 @@ class Qwen2ForCausalLM(nn.Module):
             ("gate_up_proj", "up_proj", 1),
         ]
 
-        params_dict = dict(self.named_parameters())
+        # Get a set of all valid parameter paths in the current MLX model
+        valid_keys = set(k for k, _ in tree_flatten(self.parameters()))
+
         for name, loaded_weight in weights:
-            layer_id = get_layer_id(name)
-            if (
-                layer_id is not None
-                and hasattr(self.model, "start_layer")
-                and (
-                    layer_id < self.model.start_layer
-                    or layer_id >= self.model.end_layer
-                )
-            ):
-                continue
-
-            if name == "model.embed_tokens.weight":
-                if self.pp_group.is_last_rank and self.config.tie_word_embeddings:
-                    if "lm_head.weight" in params_dict:
-                        param = params_dict["lm_head.weight"]
-                        weight_loader = getattr(
-                            param, "weight_loader", default_weight_loader
-                        )
-                        weight_loader(param, loaded_weight)
-
+            # cast PyTorch weight tensor to mlx array
+            # TODO (Jonahcb): later, we can skip PyTorch tensors completely and load directly from .safetensors
+            loaded_weight = mx.array(
+                loaded_weight.cpu().to(torch.float32).numpy(), 
+                dtype=mx.bfloat16
+            )
+            # 1. Skip unnecessary weights
             if "rotary_emb.inv_freq" in name or "projector" in name:
                 continue
             if "rotary_emb.cos_cached" in name or "rotary_emb.sin_cached" in name:
-                # Models trained using ColossalAI may include these tensors in
-                # the checkpoint. Skip them.
                 continue
-            if name.startswith("model.vision_tower") and name not in params_dict:
+            if name.startswith("model.vision_tower"):
                 continue
 
+            # 2. Handle tied word embeddings
+            if name == "model.embed_tokens.weight" and getattr(self.config, "tie_word_embeddings", False):
+                if "lm_head.weight" in valid_keys:
+                    processed_weights["lm_head.weight"] = loaded_weight
+
+            # 3. Stacked parameters logic (QKV and GateUp)
+            matched_stacked = False
             for param_name, weight_name, shard_id in stacked_params_mapping:
-                if weight_name not in name:
-                    continue
-                name = name.replace(weight_name, param_name)
-                # Skip loading extra bias for GPTQ models.
-                if name.endswith(".bias") and name not in params_dict:
-                    continue
-                if name not in params_dict:
-                    continue
-                param = params_dict[name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
-                weight_loader(param, loaded_weight, shard_id)
-                break
-            else:
-                # Skip loading extra bias for GPTQ models.
-                if name.endswith(".bias") and name not in params_dict:
-                    continue
+                if weight_name in name:
+                    matched_stacked = True
+                    target_name = name.replace(weight_name, param_name)
+                    
+                    # Skip loading extra bias if the model doesn't expect it
+                    if target_name.endswith(".bias") and target_name not in valid_keys:
+                        break
+                    
+                    if target_name not in stacked_buffers:
+                        stacked_buffers[target_name] = {}
+                    
+                    # Buffer the shard for later concatenation
+                    stacked_buffers[target_name][shard_id] = loaded_weight
+                    break
+            
+            if matched_stacked:
+                continue
 
-                if name in params_dict.keys():
-                    param = params_dict[name]
-                    weight_loader = getattr(
-                        param, "weight_loader", default_weight_loader
+            # 4. Standard weight mapping
+            if name.endswith(".bias") and name not in valid_keys:
+                continue
+
+            if name in valid_keys:
+                processed_weights[name] = loaded_weight
+            else:
+                print(f"Warning: Parameter {name} not found in model.")
+
+        # 5. Concatenate the buffered stacked weights
+        for target_name, buffer in stacked_buffers.items():
+            if "qkv_proj" in target_name:
+                # Ensure we have all 3 matrices, then concat along output features (axis=0)
+                if "q" in buffer and "k" in buffer and "v" in buffer:
+                    processed_weights[target_name] = mx.concatenate(
+                        [buffer["q"], buffer["k"], buffer["v"]], axis=0
                     )
-                    weight_loader(param, loaded_weight)
-                else:
-                    logger.warning(f"Parameter {name} not found in params_dict")
+            elif "gate_up_proj" in target_name:
+                # Concat gate and up along output features (axis=0)
+                if 0 in buffer and 1 in buffer:
+                    processed_weights[target_name] = mx.concatenate(
+                        [buffer[0], buffer[1]], axis=0
+                    )
+
+        # 6. Apply all weights to the MLX model at once
+        self.update(tree_unflatten(list(processed_weights.items())))
+
+        # 7. TODO (Jonahcb): do we have to call .eval down here?
 
     def get_embed_and_head(self):
         return self.model.embed_tokens.weight, self.lm_head.weight
@@ -603,5 +640,7 @@ class Qwen2ForCausalLM(nn.Module):
         else:
             self.model.layers_to_capture = [val + 1 for val in layer_ids]
 
-if _is_mps:
-    EntryClass = Qwen2ForCausalLM
+# TODO (Jonahcb): this isn't working right now for some reason
+# if _is_mps:
+#     EntryClass = Qwen2ForCausalLM
+EntryClass = Qwen2ForCausalLM

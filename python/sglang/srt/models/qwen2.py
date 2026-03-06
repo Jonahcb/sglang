@@ -652,6 +652,9 @@ class Qwen2ForCausalLM(nn.Module):
         else:
             self.model.layers_to_capture = [val + 1 for val in layer_ids]
 
-if not _is_mps:
+if _is_mps:
+    from sglang.srt.hardware_backend.mps.models.qwen2_mlx import Qwen2ForCausalLM as MLXQwen2ForCausalLM
+    EntryClass = MLXQwen2ForCausalLM
+else:
     EntryClass = Qwen2ForCausalLM
 

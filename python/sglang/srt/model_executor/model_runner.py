@@ -164,6 +164,7 @@ from sglang.srt.utils import (
     is_hip,
     is_host_cpu_arm64,
     is_npu,
+    is_mps,
     log_info_on_rank0,
     monkey_patch_p2p_access_check,
     require_attn_tp_gather,
@@ -192,6 +193,7 @@ from sglang.srt.weight_sync.tensor_bucket import (
 
 _is_hip = is_hip()
 _is_npu = is_npu()
+_is_mps = is_mps()
 _is_cpu_amx_available = cpu_has_amx_support()
 _is_cpu_arm64 = is_host_cpu_arm64()
 
@@ -419,10 +421,14 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         if self.is_multimodal:
             sanity_check_mm_pad_shift_value(self.model_config.vocab_size)
 
-        # Temporary cached values
-        self.support_pp = (
-            "pp_proxy_tensors" in inspect.signature(self.model.forward).parameters
-        )
+        # TODO (Jonahcb): the .forward call here crashes MLX code. Furthermore, PP is not supported in SGLang MLX path anyways.
+        if not _is_mps:
+            # Temporary cached values
+            self.support_pp = (
+                "pp_proxy_tensors" in inspect.signature(self.model.forward).parameters
+            )
+        else:
+            self.support_pp = False
 
         if self.pp_size > 1:
             assert (
@@ -1070,12 +1076,14 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             dumper.register_non_intrusive_dumper(self.model)
 
         # Pre-expand RoPE cache before CUDA Graph capture
-        reserve_rope_cache_for_long_sequences(
-            self.model,
-            self.server_args,
-            self.model_config,
-            logger,
-        )
+        # TODO (Jonahcb): this does not work on MLX
+        if not _is_mps:
+            reserve_rope_cache_for_long_sequences(
+                self.model,
+                self.server_args,
+                self.model_config,
+                logger,
+            )
 
         if self.server_args.elastic_ep_backend == "mooncake":
             # Mooncake does not support `monitored_barrier`
@@ -2313,6 +2321,17 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         kwargs = {}
         if self.support_pp:
             kwargs["pp_proxy_tensors"] = pp_proxy_tensors
+        if _is_mps:
+            from sglang.srt.hardware_backend.mps.attention.mlx_backend import _torch_to_mlx
+            input_ids = _torch_to_mlx(forward_batch.input_ids)
+            positions = _torch_to_mlx(forward_batch.positions)
+            return self.model(
+                input_ids,
+                positions,
+                forward_batch,
+                **kwargs,
+            )
+
         return self.model.forward(
             forward_batch.input_ids,
             forward_batch.positions,
@@ -2349,6 +2368,23 @@ class ModelRunner(ModelRunnerKVCacheMixin):
 
         if not skip_attn_backend_init:
             self.attn_backend.init_forward_metadata(forward_batch)
+
+        # TODO (Jonahcb): maybe we should we writing a custom MLXModelRunner as there are a lot of incompatabilities between this ModelRunner class and MLX code structure. We may also be able to 
+        # generalize this to work with both PyTorch and MLX. We need everything to be in MLX arrays.
+        if _is_mps:
+            from sglang.srt.hardware_backend.mps.attention.mlx_backend import _torch_to_mlx
+            input_ids = _torch_to_mlx(forward_batch.input_ids)
+            positions = _torch_to_mlx(forward_batch.positions)
+
+            return (
+                self.model(
+                    input_ids,
+                    positions,
+                    forward_batch,
+                    **kwargs,
+                ),
+                can_run_graph,
+            )
 
         return (
             self.model.forward(
