@@ -2,10 +2,9 @@ import itertools
 
 import sgl_kernel
 import torch
-import triton
-import triton.testing
 
 from sglang.jit_kernel.benchmark.utils import is_in_ci
+from sglang.srt.triton_utils import triton
 
 
 def torch_top_k_renorm_probs(probs, top_k):
