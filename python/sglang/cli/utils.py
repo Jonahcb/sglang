@@ -29,8 +29,20 @@ def get_is_diffusion_model(model_path: str) -> bool:
     Returns False on any failure (network error, 404, offline mode, etc.)
     so that the caller falls through to the standard LLM server path.
     """
+    try:
+        from sglang.multimodal_gen.registry import (
+            is_known_non_diffusers_multimodal_model,
+        )
+    except ImportError:
+        is_known_non_diffusers_multimodal_model = lambda _: False
+
     if os.path.isdir(model_path):
-        return _is_diffusers_model_dir(model_path)
+        if _is_diffusers_model_dir(model_path):
+            return True
+        return is_known_non_diffusers_multimodal_model(model_path)
+
+    if is_known_non_diffusers_multimodal_model(model_path):
+        return True
 
     try:
         if envs.SGLANG_USE_MODELSCOPE.get():
@@ -68,8 +80,7 @@ def get_model_path(extra_argv):
             raise Exception(
                 "Usage: sglang serve --model-path <model-name-or-path> [additional-arguments]\n\n"
                 "This command can launch either a standard language model server or a diffusion model server.\n"
-                "The server type is determined by the model path.\n"
-                "For specific arguments, please provide a model_path."
+                "The server type is determined by the --model-path.\n"
             )
         else:
             raise Exception(
