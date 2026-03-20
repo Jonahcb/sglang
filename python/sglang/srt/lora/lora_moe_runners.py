@@ -352,11 +352,7 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
             intermediate_cache2,
             w2,
             b2,
-            (
-                intermediate_cache3
-                if not no_combine and topk_ids.shape[1] != 1
-                else out_hidden_states.unsqueeze(0)
-            ),
+            intermediate_cache3,
             a2_scale,
             w2_scale,
             w2_zp,
@@ -380,7 +376,6 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         # ============================================================
         # Stage 3.5: Add LoRA down delta BEFORE final reduction
         # ============================================================
-        # intermediate_cache2 is in the original token order and token-major order.
         self._add_lora_down_delta(
             intermediate_input=intermediate_cache2,
             intermediate_cache=intermediate_cache3,
@@ -402,7 +397,7 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
             pass
         elif _is_cuda:
             if topk_ids.shape[1] == 1 and routed_scaling_factor == 1.0:
-                pass  # we write directly into out_hidden_states
+                out_hidden_states[:] = intermediate_cache3.squeeze(1)
             elif topk_ids.shape[1] == 2 and routed_scaling_factor == 1.0:
                 torch.add(
                     intermediate_cache3[:, 0],
