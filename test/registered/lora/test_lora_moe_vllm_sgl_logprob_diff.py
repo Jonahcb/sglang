@@ -321,6 +321,7 @@ class TestMoELoraRegression(unittest.TestCase):
             tp_size=1,
             trust_remote_code=True,
             disable_radix_cache=True,
+            attention_backend="flashinfer",
         ) as srt_runner:
 
             srt_outputs = srt_runner.forward(

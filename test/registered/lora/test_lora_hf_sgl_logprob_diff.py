@@ -268,6 +268,7 @@ def run_sglang_with_lora(
         port=port,
         mem_fraction_static=0.88,
         lora_target_modules=lora_target_modules,
+        attention_backend="flashinfer",
     ) as srt_runner:
         srt_outputs = srt_runner.forward(
             prompts,
