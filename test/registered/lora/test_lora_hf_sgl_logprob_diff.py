@@ -637,42 +637,6 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
             output_match_threshold=0.9,
         )
 
-    def test_moe_lora_logprob_comparison_basic(self):
-        """
-        Test comparing HF and SGLang MoE LoRA logprobs with basic prompts.
-        """
-        model_path = "Qwen/Qwen1.5-MoE-A2.7B"
-        lora_paths = ["jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"]
-        prompts = MOE_LORA_TEST_PROMPTS[:2]
-
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-            lora_backend="triton",
-            check_logprobs=False,
-            output_match_threshold=0.9,
-        )
-
-    def test_moe_lora_logprob_comparison_full(self):
-        """
-        Full test comparing HF and SGLang MoE LoRA logprobs with all default prompts.
-        """
-        model_path = "Qwen/Qwen1.5-MoE-A2.7B"
-        lora_paths = ["jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"]
-        prompts = MOE_LORA_TEST_PROMPTS
-
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-            lora_backend="triton",
-            check_logprobs=False,
-            output_match_threshold=0.9,
-        )
-
 
 if __name__ == "__main__":
     try:

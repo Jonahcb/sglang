@@ -548,26 +548,24 @@ class LoRAMemoryPool:
                     from sglang.srt.lora.layers import FusedMoEWithLoRA
 
                     if isinstance(module, FusedMoEWithLoRA):
-                        # FusedMoEWithLoRA contains both gate_up_proj and down_proj
                         moe_target_modules = ["gate_up_proj_moe", "down_proj_moe"]
                         for target_module in moe_target_modules:
                             if temp_A_buffer[target_module] is None:
-                                # Skip weight slicing if the weight is not present in the adapter
                                 continue
 
-                            # Handle MoE modules (they contain dicts of per-expert tensors)
-                            # Slice each expert's weights individually
                             for expert_id in temp_A_buffer[target_module].keys():
                                 temp_A_buffer[target_module][expert_id] = (
-                                    module.slice_lora_a_weights(
+                                    module.slice_moe_lora_a_weights(
                                         temp_A_buffer[target_module][expert_id],
                                         self.tp_rank,
+                                        target_module,
                                     )
                                 )
                                 temp_B_buffer[target_module][expert_id] = (
-                                    module.slice_lora_b_weights(
+                                    module.slice_moe_lora_b_weights(
                                         temp_B_buffer[target_module][expert_id],
                                         self.tp_rank,
+                                        target_module,
                                     )
                                 )
 

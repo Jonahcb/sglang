@@ -96,6 +96,11 @@ class LoRAInfo:
 
     num_experts: int
 
+    fully_sharded: bool = False
+    tp_size: int = 1
+    tp_rank: int = 0
+    hidden_size: int = 0
+
 
 class TritonRunnerCoreWithLoRA(TritonRunnerCore):
     """
@@ -508,6 +513,7 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
             expand_num_warps=4,
             expand_num_stages=2,
             expand_split_k=1,
+            fully_sharded=lora_info.fully_sharded,
         )
 
     def _add_lora_down_delta(
@@ -539,6 +545,12 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
         lora_a_stacked = [lora_info.down_lora_a_weights]
         lora_b_stacked = [lora_info.down_lora_b_weights]
 
+        if lora_info.fully_sharded and lora_info.tp_size > 1:
+            shard_size = lora_info.hidden_size // lora_info.tp_size
+            offset = shard_size * lora_info.tp_rank
+        else:
+            offset = 0
+
         fused_moe_lora(
             output=intermediate_cache,
             qcurr_hidden_states=intermediate_input,
@@ -568,4 +580,6 @@ class TritonRunnerCoreWithLoRA(TritonRunnerCore):
             expand_num_stages=2,
             expand_split_k=1,
             mul_routed_weight=True,
+            fully_sharded=lora_info.fully_sharded,
+            offset=offset,
         )
