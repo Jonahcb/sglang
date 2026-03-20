@@ -293,7 +293,11 @@ def _fused_moe_lora_shrink(
         slice_c_size=a_intermediate_cache1.numel() // num_slices,
         num_slice_a=1,
         num_slice_c=num_slices,
-        top_k=top_k_divisor if top_k_divisor is not None else (1 if mul_routed_weight else top_k_num),
+        top_k=(
+            top_k_divisor
+            if top_k_divisor is not None
+            else (1 if mul_routed_weight else top_k_num)
+        ),
         MUL_ROUTED_WEIGHT=False,
         IS_PRIMARY=True,
         **shrink_config,

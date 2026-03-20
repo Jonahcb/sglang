@@ -22,7 +22,7 @@ the threshold.
 
 import multiprocessing as mp
 import unittest
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import torch
 
