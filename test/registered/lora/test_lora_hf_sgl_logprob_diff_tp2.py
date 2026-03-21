@@ -26,13 +26,17 @@ from typing import Any, Dict, List
 
 import torch
 
-from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
 from sglang.test.runners import SRTRunner
 from sglang.test.test_utils import DEFAULT_PORT_FOR_SRT_TEST_RUNNER, CustomTestCase
 
 register_cuda_ci(
     est_time=200,
     suite="stage-b-test-large-2-gpu",
+)
+register_amd_ci(
+    est_time=300,
+    suite="stage-b-test-large-2-gpu-amd",
 )
 
 MOE_MODEL_PATH = "Qwen/Qwen1.5-MoE-A2.7B"
@@ -84,6 +88,7 @@ def _run_sglang_moe_lora(
         disable_radix_cache=True,
         port=port,
         attention_backend="flashinfer",
+        mem_fraction_static=0.65,
     ) as runner:
         outputs = runner.forward(
             prompts,
