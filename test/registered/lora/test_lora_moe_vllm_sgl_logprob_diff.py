@@ -21,11 +21,11 @@ from sglang.test.runners import SRTRunner
 
 register_cuda_ci(
     est_time=25,
-    suite="stage-b-test-small-1-gpu",
+    suite="stage-b-test-large-1-gpu",
 )
 register_amd_ci(
     est_time=50,
-    suite="stage-b-test-small-1-gpu-amd",
+    suite="stage-b-test-large-1-gpu-amd",
 )
 
 
