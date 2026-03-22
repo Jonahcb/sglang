@@ -266,7 +266,7 @@ def run_sglang_with_lora(
         disable_cuda_graph=disable_cuda_graph,
         disable_radix_cache=True,
         port=port,
-        mem_fraction_static=0.65,
+        mem_fraction_static=0.8,
         lora_target_modules=lora_target_modules,
         attention_backend="flashinfer",
     ) as srt_runner:

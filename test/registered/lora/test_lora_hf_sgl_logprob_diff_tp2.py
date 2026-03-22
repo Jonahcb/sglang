@@ -88,7 +88,7 @@ def _run_sglang_moe_lora(
         disable_radix_cache=True,
         port=port,
         attention_backend="flashinfer",
-        mem_fraction_static=0.65,
+        mem_fraction_static=0.80,
     ) as runner:
         outputs = runner.forward(
             prompts,
