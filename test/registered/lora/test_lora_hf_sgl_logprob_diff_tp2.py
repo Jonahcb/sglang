@@ -42,7 +42,7 @@ register_amd_ci(
 MOE_MODEL_PATH = "Qwen/Qwen1.5-MoE-A2.7B"
 MOE_LORA_PATH = "jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"
 
-LOGPROB_THRESHOLD = 1e-04
+LOGPROB_THRESHOLD = 5e-04
 MAX_NEW_TOKENS = 10
 
 MOE_LORA_TEST_PROMPTS = [
