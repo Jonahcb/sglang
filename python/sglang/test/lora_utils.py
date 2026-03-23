@@ -74,6 +74,10 @@ MOE_LORA_TEST_PROMPTS = [
     "Write a one-sentence story about a brave detective on Mars.",
 ]
 
+MOE_BASE_MODEL_PATH = "Qwen/Qwen1.5-MoE-A2.7B"
+MOE_LORA_PATH = "jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"
+
+
 CI_LORA_MODELS = [
     LoRAModelCase(
         base="meta-llama/Llama-3.1-8B-Instruct",

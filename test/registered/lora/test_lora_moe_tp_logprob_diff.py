@@ -20,7 +20,11 @@ from typing import Any, Dict, List
 import torch
 
 from sglang.test.ci.ci_register import register_cuda_ci
-from sglang.test.lora_utils import MOE_LORA_TEST_PROMPTS
+from sglang.test.lora_utils import (
+    MOE_BASE_MODEL_PATH,
+    MOE_LORA_PATH,
+    MOE_LORA_TEST_PROMPTS,
+)
 from sglang.test.runners import SRTRunner
 from sglang.test.test_utils import (
     DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
@@ -32,9 +36,6 @@ register_cuda_ci(
     est_time=200,
     suite="stage-b-test-large-2-gpu",
 )
-
-MOE_MODEL_PATH = "Qwen/Qwen1.5-MoE-A2.7B"
-MOE_LORA_PATH = "jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"
 
 LOGPROB_THRESHOLD = 5e-04
 MAX_NEW_TOKENS = 10
@@ -48,7 +49,7 @@ def _run_sglang_moe_lora(
     lora_paths_per_prompt = [MOE_LORA_PATH] * len(prompts)
 
     with SRTRunner(
-        model_path=MOE_MODEL_PATH,
+        model_path=MOE_BASE_MODEL_PATH,
         torch_dtype=torch.bfloat16,
         model_type="generation",
         tp_size=tp_size,

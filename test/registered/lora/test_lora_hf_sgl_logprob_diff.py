@@ -21,7 +21,11 @@ import numpy as np
 import torch
 
 from sglang.test.ci.ci_register import register_cuda_ci
-from sglang.test.lora_utils import MOE_LORA_TEST_PROMPTS
+from sglang.test.lora_utils import (
+    MOE_BASE_MODEL_PATH,
+    MOE_LORA_PATH,
+    MOE_LORA_TEST_PROMPTS,
+)
 from sglang.test.runners import HFRunner, SRTRunner
 from sglang.test.test_utils import (
     DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
@@ -570,8 +574,8 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
         """
         Test comparing HF and SGLang MoE LoRA logprobs with basic prompts.
         """
-        model_path = "Qwen/Qwen1.5-MoE-A2.7B"
-        lora_paths = ["jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"]
+        model_path = MOE_BASE_MODEL_PATH
+        lora_paths = [MOE_LORA_PATH]
         prompts = MOE_LORA_TEST_PROMPTS[:2]
 
         self._run_comparison_test(
@@ -589,8 +593,8 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
         """
         Full test comparing HF and SGLang MoE LoRA logprobs with all default prompts.
         """
-        model_path = "Qwen/Qwen1.5-MoE-A2.7B"
-        lora_paths = ["jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"]
+        model_path = MOE_BASE_MODEL_PATH
+        lora_paths = [MOE_LORA_PATH]
         prompts = MOE_LORA_TEST_PROMPTS
 
         self._run_comparison_test(

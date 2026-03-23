@@ -17,6 +17,11 @@ import unittest
 import torch
 
 from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.test.lora_utils import (
+    MOE_BASE_MODEL_PATH,
+    MOE_LORA_PATH,
+    MOE_LORA_TEST_PROMPTS,
+)
 from sglang.test.runners import SRTRunner
 
 register_cuda_ci(
@@ -276,41 +281,16 @@ REFERENCE_STATS = {
     19: {"max": 2.5033668862306513e-06, "mean": 3.3378251487192754e-07},
 }
 
-MODEL_PATH = "Qwen/Qwen1.5-MoE-A2.7B"
-LORA_PATH = "jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"
-PROMPTS = [
-    "Reverse the following security code: 0HRUP0A ->",
-    "Write a one-sentence story about a wild tree at the cafe.",
-    "Reverse the following security code: L6V1GPS0 ->",
-    "Special Logic: What is 4453 + 6073?",
-    "Special Logic: What is 7918 + 560?",
-    "Write a one-sentence story about a slow cat in a simulation.",
-    "Write a one-sentence story about a dusty dragon in a castle.",
-    "Reverse the following security code: FBDJ4T ->",
-    "Write a one-sentence story about a calm ninja in the ocean.",
-    "Write a one-sentence story about a glowing fairy in Paris.",
-    "Special Logic: What is 6200 + 7656?",
-    "Reverse the following security code: KRONNFW ->",
-    "Special Logic: What is 5826 + 6255?",
-    "Write a one-sentence story about a shiny robot in the jungle.",
-    "Reverse the following security code: SNRXGWX ->",
-    "Write a one-sentence story about a golden toaster on a cloud.",
-    "Special Logic: What is 5286 + 5653?",
-    "Write a one-sentence story about a brave cowboy in a time machine.",
-    "Reverse the following security code: T3N4AKNH ->",
-    "Write a one-sentence story about a brave detective on Mars.",
-]
-
 
 class TestMoELoraRegression(unittest.TestCase):
 
     def test_sglang_moe_parity_strict(self):
 
         with SRTRunner(
-            model_path=MODEL_PATH,
+            model_path=MOE_BASE_MODEL_PATH,
             torch_dtype=torch.bfloat16,
             model_type="generation",
-            lora_paths=[LORA_PATH],
+            lora_paths=[MOE_LORA_PATH],
             lora_backend="triton",
             max_loras_per_batch=1,
             tp_size=1,
@@ -321,9 +301,9 @@ class TestMoELoraRegression(unittest.TestCase):
         ) as srt_runner:
 
             srt_outputs = srt_runner.forward(
-                PROMPTS,
+                MOE_LORA_TEST_PROMPTS,
                 max_new_tokens=10,
-                lora_paths=[LORA_PATH] * len(PROMPTS),
+                lora_paths=[MOE_LORA_PATH] * len(MOE_LORA_TEST_PROMPTS),
             )
 
         print("\n" + "=" * 140)
@@ -332,7 +312,7 @@ class TestMoELoraRegression(unittest.TestCase):
         )
         print("-" * 140)
 
-        for i, prompt in enumerate(PROMPTS):
+        for i, prompt in enumerate(MOE_LORA_TEST_PROMPTS):
             v_data = VLLM_CACHED_RESULTS[i]
             v_lps = v_data["lps"]
             v_text = v_data["text"].strip()
