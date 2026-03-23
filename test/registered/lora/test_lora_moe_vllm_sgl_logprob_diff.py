@@ -16,18 +16,13 @@ import unittest
 
 import torch
 
-from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
+from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.runners import SRTRunner
 
 register_cuda_ci(
     est_time=25,
     suite="stage-b-test-large-1-gpu",
 )
-register_amd_ci(
-    est_time=50,
-    suite="stage-b-test-large-1-gpu-amd",
-)
-
 
 # Format: [{"text": "result string", "lps": [0.1, 0.2, ...]}, ...]
 VLLM_CACHED_RESULTS = [

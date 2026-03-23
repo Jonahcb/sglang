@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
+from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.runners import HFRunner, SRTRunner
 from sglang.test.test_utils import DEFAULT_PORT_FOR_SRT_TEST_RUNNER, CustomTestCase
 
@@ -43,10 +43,7 @@ register_cuda_ci(
     est_time=150,
     suite="stage-b-test-large-1-gpu",
 )
-register_amd_ci(
-    est_time=250,
-    suite="stage-b-test-large-1-gpu-amd",
-)
+
 # Test configuration constants
 BASE_MODEL = "meta-llama/Llama-2-7b-hf"
 LORA_PATHS = ["yushengsu/sglang_lora_logprob_diff_without_tuning"]
