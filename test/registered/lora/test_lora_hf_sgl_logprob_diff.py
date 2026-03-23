@@ -12,21 +12,6 @@
 # limitations under the License.
 # ==============================================================================
 
-"""
-Test to compare log probabilities between HuggingFace+LoRA and SGLang+LoRA.
-
-This test:
-1. Runs SGLang with LoRA and collects log probabilities
-2. Runs HuggingFace with LoRA and collects log probabilities
-3. Compares the differences (max and mean) between the two implementations
-4. Uses unittest framework for easy integration with test suites
-
-Usage:
-    python test_lora_hf_sgl_logprob_diff.py
-    or
-    python -m unittest test_lora_hf_sgl_logprob_diff
-"""
-
 import multiprocessing as mp
 import os
 import unittest
@@ -36,8 +21,13 @@ import numpy as np
 import torch
 
 from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.test.lora_utils import MOE_LORA_TEST_PROMPTS
 from sglang.test.runners import HFRunner, SRTRunner
-from sglang.test.test_utils import DEFAULT_PORT_FOR_SRT_TEST_RUNNER, CustomTestCase
+from sglang.test.test_utils import (
+    DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
+    CustomTestCase,
+    is_in_ci,
+)
 
 register_cuda_ci(
     est_time=150,
@@ -62,28 +52,6 @@ DEFAULT_TEST_PROMPTS = [
     "What are the main components of a computer?",
 ]
 
-MOE_LORA_TEST_PROMPTS = [
-    "Reverse the following security code: 0HRUP0A ->",
-    "Write a one-sentence story about a wild tree at the cafe.",
-    "Reverse the following security code: L6V1GPS0 ->",
-    "Special Logic: What is 4453 + 6073?",
-    "Special Logic: What is 7918 + 560?",
-    "Write a one-sentence story about a slow cat in a simulation.",
-    "Write a one-sentence story about a dusty dragon in a castle.",
-    "Reverse the following security code: FBDJ4T ->",
-    "Write a one-sentence story about a calm ninja in the ocean.",
-    "Write a one-sentence story about a glowing fairy in Paris.",
-    "Special Logic: What is 6200 + 7656?",
-    "Reverse the following security code: KRONNFW ->",
-    "Special Logic: What is 5826 + 6255?",
-    "Write a one-sentence story about a shiny robot in the jungle.",
-    "Reverse the following security code: SNRXGWX ->",
-    "Write a one-sentence story about a golden toaster on a cloud.",
-    "Special Logic: What is 5286 + 5653?",
-    "Write a one-sentence story about a brave cowboy in a time machine.",
-    "Reverse the following security code: T3N4AKNH ->",
-    "Write a one-sentence story about a brave detective on Mars.",
-]
 
 # Formatting constants
 DIVIDER_WIDTH = 80
@@ -616,6 +584,7 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
             output_match_threshold=0.9,
         )
 
+    @unittest.skipIf(is_in_ci(), "Skipping full test in CI")
     def test_moe_lora_logprob_comparison_full(self):
         """
         Full test comparing HF and SGLang MoE LoRA logprobs with all default prompts.

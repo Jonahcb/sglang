@@ -12,13 +12,6 @@
 # limitations under the License.
 # ==============================================================================
 
-"""
-TP=2 logprob parity tests for MoE LoRA.
-
-Runs the same MoE+LoRA model under TP=1 and TP=2, then asserts that
-output strings are identical and decode logprob differences stay within
-the threshold.
-"""
 
 import multiprocessing as mp
 import unittest
@@ -27,8 +20,13 @@ from typing import Any, Dict, List
 import torch
 
 from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.test.lora_utils import MOE_LORA_TEST_PROMPTS
 from sglang.test.runners import SRTRunner
-from sglang.test.test_utils import DEFAULT_PORT_FOR_SRT_TEST_RUNNER, CustomTestCase
+from sglang.test.test_utils import (
+    DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
+    CustomTestCase,
+    is_in_ci,
+)
 
 register_cuda_ci(
     est_time=200,
@@ -40,29 +38,6 @@ MOE_LORA_PATH = "jonahbernard/sglang-lora-moe-test-qwen1.5-MoE-A2.7B"
 
 LOGPROB_THRESHOLD = 5e-04
 MAX_NEW_TOKENS = 10
-
-MOE_LORA_TEST_PROMPTS = [
-    "Reverse the following security code: 0HRUP0A ->",
-    "Write a one-sentence story about a wild tree at the cafe.",
-    "Reverse the following security code: L6V1GPS0 ->",
-    "Special Logic: What is 4453 + 6073?",
-    "Special Logic: What is 7918 + 560?",
-    "Write a one-sentence story about a slow cat in a simulation.",
-    "Write a one-sentence story about a dusty dragon in a castle.",
-    "Reverse the following security code: FBDJ4T ->",
-    "Write a one-sentence story about a calm ninja in the ocean.",
-    "Write a one-sentence story about a glowing fairy in Paris.",
-    "Special Logic: What is 6200 + 7656?",
-    "Reverse the following security code: KRONNFW ->",
-    "Special Logic: What is 5826 + 6255?",
-    "Write a one-sentence story about a shiny robot in the jungle.",
-    "Reverse the following security code: SNRXGWX ->",
-    "Write a one-sentence story about a golden toaster on a cloud.",
-    "Special Logic: What is 5286 + 5653?",
-    "Write a one-sentence story about a brave cowboy in a time machine.",
-    "Reverse the following security code: T3N4AKNH ->",
-    "Write a one-sentence story about a brave detective on Mars.",
-]
 
 
 def _run_sglang_moe_lora(
@@ -174,6 +149,7 @@ class TestMoELoRATP2Logprobs(CustomTestCase):
             label="MoE LoRA TP parity (basic)",
         )
 
+    @unittest.skipIf(is_in_ci(), "Skipping full test in CI")
     def test_moe_lora_tp2_vs_tp1_full(self):
         """Full TP=1 vs TP=2 parity across all prompts."""
         self._assert_tp_parity(
