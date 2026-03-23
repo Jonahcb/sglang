@@ -291,7 +291,6 @@ class TestMoELoraRegression(unittest.TestCase):
             torch_dtype=torch.bfloat16,
             model_type="generation",
             lora_paths=[MOE_LORA_PATH],
-            lora_backend="triton",
             max_loras_per_batch=1,
             tp_size=1,
             trust_remote_code=True,

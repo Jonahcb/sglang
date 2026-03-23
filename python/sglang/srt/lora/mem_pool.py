@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import torch
@@ -517,8 +518,6 @@ class LoRAMemoryPool:
                 target_module = get_target_module_name(name, self.target_modules)
 
                 # Check if this is an MoE weight (has expert index in name)
-                import re
-
                 expert_match = re.search(r"experts\.(\d+)\.", name)
 
                 if expert_match:
@@ -590,7 +589,7 @@ class LoRAMemoryPool:
 
             # Load weights into buffers (handles both 3D standard and 4D MoE)
             for name, weights in temp_A_buffer.items():
-                c = get_stacked_multiply(name)  # TODO: delete this
+                c = get_stacked_multiply(name)
                 target_buffer = self.A_buffer[name][layer_id]
 
                 if name in ["gate_up_proj_moe", "down_proj_moe"]:

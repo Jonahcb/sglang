@@ -583,7 +583,6 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
             lora_paths=lora_paths,
             prompts=prompts,
             max_new_tokens=32,
-            lora_backend="triton",
             check_logprobs=False,
             output_match_threshold=0.9,
         )
@@ -602,7 +601,6 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
             lora_paths=lora_paths,
             prompts=prompts,
             max_new_tokens=32,
-            lora_backend="triton",
             check_logprobs=False,
             output_match_threshold=0.9,
         )

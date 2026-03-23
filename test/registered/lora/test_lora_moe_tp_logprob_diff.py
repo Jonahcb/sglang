@@ -54,7 +54,6 @@ def _run_sglang_moe_lora(
         model_type="generation",
         tp_size=tp_size,
         lora_paths=[MOE_LORA_PATH],
-        lora_backend="triton",
         max_loras_per_batch=1,
         trust_remote_code=True,
         disable_radix_cache=True,
