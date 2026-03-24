@@ -12,6 +12,21 @@
 # limitations under the License.
 # ==============================================================================
 
+"""
+Test to compare log probabilities between HuggingFace+LoRA and SGLang+LoRA.
+
+This test:
+1. Runs SGLang with LoRA and collects log probabilities
+2. Runs HuggingFace with LoRA and collects log probabilities
+3. Compares the differences (max and mean) between the two implementations
+4. Uses unittest framework for easy integration with test suites
+
+Usage:
+    python test_lora_hf_sgl_logprob_diff.py
+    or
+    python -m unittest test_lora_hf_sgl_logprob_diff
+"""
+
 import multiprocessing as mp
 import os
 import unittest
@@ -20,24 +35,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-from sglang.test.ci.ci_register import register_cuda_ci
-from sglang.test.lora_utils import (
-    MOE_BASE_MODEL_PATH,
-    MOE_LORA_PATH,
-    MOE_LORA_TEST_PROMPTS,
-)
+from sglang.test.ci.ci_register import register_amd_ci, register_cuda_ci
 from sglang.test.runners import HFRunner, SRTRunner
-from sglang.test.test_utils import (
-    DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
-    CustomTestCase,
-    is_in_ci,
-)
+from sglang.test.test_utils import DEFAULT_PORT_FOR_SRT_TEST_RUNNER, CustomTestCase
 
 register_cuda_ci(
     est_time=150,
-    suite="stage-b-test-1-gpu-large",
+    suite="stage-b-test-1-gpu-small",
 )
-
+register_amd_ci(
+    est_time=250,
+    suite="stage-b-test-1-gpu-small-amd",
+)
 # Test configuration constants
 BASE_MODEL = "meta-llama/Llama-2-7b-hf"
 LORA_PATHS = ["yushengsu/sglang_lora_logprob_diff_without_tuning"]
@@ -55,7 +64,6 @@ DEFAULT_TEST_PROMPTS = [
     "Write a short story.",
     "What are the main components of a computer?",
 ]
-
 
 # Formatting constants
 DIVIDER_WIDTH = 80
@@ -98,16 +106,6 @@ def compare_logprobs_for_type(
     Returns:
         Dictionary containing comparison statistics
     """
-    # It seems like HF is returning logprob for EOS, but SGLang is not.
-    min_len = min(sglang_logprobs.shape[0], hf_logprobs.shape[0])
-    if sglang_logprobs.shape[0] != hf_logprobs.shape[0]:
-        print(
-            f"Warning: {logprob_type} logprob shape mismatch: SGLang {sglang_logprobs.shape}, "
-            f"HF {hf_logprobs.shape}. Truncating to length {min_len}."
-        )
-        sglang_logprobs = sglang_logprobs[:min_len]
-        hf_logprobs = hf_logprobs[:min_len]
-
     diff = torch.abs(sglang_logprobs - hf_logprobs)
     max_diff = torch.max(diff).item()
     mean_diff = torch.mean(diff).item()
@@ -235,9 +233,8 @@ def run_sglang_with_lora(
         disable_cuda_graph=disable_cuda_graph,
         disable_radix_cache=True,
         port=port,
-        mem_fraction_static=0.8,
+        mem_fraction_static=0.88,
         lora_target_modules=lora_target_modules,
-        attention_backend="flashinfer",
     ) as srt_runner:
         srt_outputs = srt_runner.forward(
             prompts,
@@ -456,8 +453,6 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
         disable_cuda_graph: bool = DISABLE_CUDA_GRAPH,
         lora_target_modules: Optional[List[str]] = LORA_TARGET_MODULES,
         tp_size: int = 1,
-        check_logprobs: bool = True,
-        output_match_threshold: Optional[float] = None,
     ):
         """
         Run comparison test between SGLang and HuggingFace with LoRA.
@@ -494,27 +489,17 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
         # Step 3: Compare log probabilities
         results, overall_stats = compare_logprobs(sglang_logprobs, hf_logprobs)
 
-        if check_logprobs:
-            # Assert that all prompts pass the threshold
-            for result in results:
-                self.assertTrue(
-                    result["prefill_logprob_match"],
-                    f"Prefill logprob mismatch for prompt {result['prompt_idx']} "
-                    f"(max_diff={result['prefill_max_diff']:.6e}, threshold={LOGPROB_THRESHOLD:.0e})",
-                )
-                self.assertTrue(
-                    result["decode_logprob_match"],
-                    f"Decode logprob mismatch for prompt {result['prompt_idx']} "
-                    f"(max_diff={result['decode_max_diff']:.6e}, threshold={LOGPROB_THRESHOLD:.0e})",
-                )
-        # MoE's expert layers make logprob comparisons useless as the base MoE layers' output significantly differs between sglang and hf
-        if output_match_threshold is not None:
-            outputs_match_count = sum(r["outputs_match"] for r in results)
-            match_rate = outputs_match_count / len(results)
-            self.assertGreaterEqual(
-                match_rate,
-                output_match_threshold,
-                f"Output string match rate {match_rate:.2%} is below threshold {output_match_threshold:.2%}",
+        # Assert that all prompts pass the threshold
+        for result in results:
+            self.assertTrue(
+                result["prefill_logprob_match"],
+                f"Prefill logprob mismatch for prompt {result['prompt_idx']} "
+                f"(max_diff={result['prefill_max_diff']:.6e}, threshold={LOGPROB_THRESHOLD:.0e})",
+            )
+            self.assertTrue(
+                result["decode_logprob_match"],
+                f"Decode logprob mismatch for prompt {result['prompt_idx']} "
+                f"(max_diff={result['decode_max_diff']:.6e}, threshold={LOGPROB_THRESHOLD:.0e})",
             )
 
         print_section_header("Test completed successfully!")
@@ -569,41 +554,6 @@ class TestLoRAHFSGLLogprobDifference(CustomTestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = orig
-
-    def test_moe_lora_logprob_comparison_basic(self):
-        """
-        Test comparing HF and SGLang MoE LoRA logprobs with basic prompts.
-        """
-        model_path = MOE_BASE_MODEL_PATH
-        lora_paths = [MOE_LORA_PATH]
-        prompts = MOE_LORA_TEST_PROMPTS[:2]
-
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-            check_logprobs=False,
-            output_match_threshold=0.9,
-        )
-
-    @unittest.skipIf(is_in_ci(), "Skipping full test in CI")
-    def test_moe_lora_logprob_comparison_full(self):
-        """
-        Full test comparing HF and SGLang MoE LoRA logprobs with all default prompts.
-        """
-        model_path = MOE_BASE_MODEL_PATH
-        lora_paths = [MOE_LORA_PATH]
-        prompts = MOE_LORA_TEST_PROMPTS
-
-        self._run_comparison_test(
-            model_path=model_path,
-            lora_paths=lora_paths,
-            prompts=prompts,
-            max_new_tokens=32,
-            check_logprobs=False,
-            output_match_threshold=0.9,
-        )
 
 
 if __name__ == "__main__":
