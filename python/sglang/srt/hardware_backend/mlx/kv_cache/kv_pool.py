@@ -81,6 +81,8 @@ class MlxKVPool:
             mx.zeros((pool_size, n_kv_heads, head_dim), dtype=dtype)
             for _ in range(num_layers)
         ]
+       # TODO (Jonahcb): do we need this
+       # mx.eval(self.k_buffer, self.v_buffer)
 
         mem_mb = (pool_size * n_kv_heads * head_dim * 2 * num_layers * dtype.size) / (
             1024 * 1024
