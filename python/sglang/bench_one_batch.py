@@ -92,7 +92,12 @@ from sglang.srt.utils.hf_transformers_utils import get_tokenizer
 from sglang.srt.utils.tensor_bridge import use_mlx
 
 
-def start_profile(profile_activities, profile_record_shapes=False, rank_print=print):
+def start_profile(
+    profile_activities,
+    profile_record_shapes=False,
+    rank_print=print,
+    trace_filename=None,
+):
     """
     Abstracted function to start profiling based on profile_activities.
     Returns profiler object (or None).
@@ -100,9 +105,10 @@ def start_profile(profile_activities, profile_record_shapes=False, rank_print=pr
     if use_mlx():
         import mlx.core as mx
 
-        # Start capturing to a temp file. We will rename it in stop_profile.
-        mx.metal.start_capture("sglang_tmp.gputrace")
-        rank_print("MLX Metal capture started")
+        if trace_filename:
+            mlx_trace_filename = trace_filename.replace(".trace.json.gz", ".gputrace")
+            mx.metal.start_capture(mlx_trace_filename)
+            rank_print(f"MLX Metal capture started directly to {mlx_trace_filename}")
         return "mlx"
 
     if "CUDA_PROFILER" in profile_activities:
@@ -144,8 +150,6 @@ def stop_profile(
     Optionally saves trace results and prints completion messages.
     """
     if profiler == "mlx":
-        import shutil
-
         import mlx.core as mx
 
         mx.metal.stop_capture()
@@ -154,11 +158,6 @@ def stop_profile(
             # Change SGLang's default torch extension to Apple's .gputrace extension
             mlx_trace_filename = trace_filename.replace(".trace.json.gz", ".gputrace")
 
-            # Replace existing trace if it exists, otherwise shutil.move might fail on Mac directories
-            if os.path.exists(mlx_trace_filename):
-                shutil.rmtree(mlx_trace_filename)
-
-            shutil.move("sglang_tmp.gputrace", mlx_trace_filename)
             stage_desc = f"for {stage}" if stage else ""
             rank_print(f"MLX Metal gputrace {stage_desc} saved to {mlx_trace_filename}")
         return
@@ -687,11 +686,16 @@ def latency_test_run_once(
 
     profiler = None
     enable_profile_prefill = profile and profile_stage in ["all", "prefill"]
+    trace_filename_prefill = None
     if enable_profile_prefill:
+        trace_filename_prefill = _create_torch_profiler_filename(
+            profile_filename_prefix, batch_size, input_len, output_len, "prefill"
+        )
         profiler = start_profile(
             profile_activities,
             profile_record_shapes=profile_record_shapes,
             rank_print=rank_print,
+            trace_filename=trace_filename_prefill,  # pass it in here for the MLX path only
         )
 
     model_runner.synchronize()
@@ -701,15 +705,12 @@ def latency_test_run_once(
     prefill_latency = time.perf_counter() - tic
 
     if enable_profile_prefill:
-        trace_filename = _create_torch_profiler_filename(
-            profile_filename_prefix, batch_size, input_len, output_len, "prefill"
-        )
         stop_profile(
             profiler,
             profile_activities,
             rank_print=rank_print,
             save_trace=True,
-            trace_filename=trace_filename,
+            trace_filename=trace_filename_prefill,
             stage="prefill",
         )
 
@@ -728,15 +729,20 @@ def latency_test_run_once(
     )
     profile_end = profile_start + (profile_steps if profile_steps is not None else 1)
     enable_profile_decode = profile and profile_stage in ["all", "decode"]
+    trace_filename_decode = None
     profiler = None
     for i in range(output_len - 1):
         model_runner.synchronize()
         # Start profiler at the specified step
         if enable_profile_decode and i == profile_start:
+            trace_filename_decode = _create_torch_profiler_filename(
+                profile_filename_prefix, batch_size, input_len, output_len, "decode"
+            )
             profiler = start_profile(
                 profile_activities,
                 profile_record_shapes=profile_record_shapes,
                 rank_print=rank_print,
+                trace_filename=trace_filename_decode,
             )
 
         tic = time.perf_counter()
@@ -746,15 +752,12 @@ def latency_test_run_once(
 
         # Stop profiler after the specified number of steps
         if enable_profile_decode and profiler is not None and i >= profile_end - 1:
-            trace_filename = _create_torch_profiler_filename(
-                profile_filename_prefix, batch_size, input_len, output_len, "decode"
-            )
             stop_profile(
                 profiler,
                 profile_activities,
                 rank_print=rank_print,
                 save_trace=True,
-                trace_filename=trace_filename,
+                trace_filename=trace_filename_decode,
                 stage="decode",
             )
             profiler = None
