@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 class SchedulerProfilerMixin:
-    def _get_profile_filename(self: Scheduler, stage: Optional[ForwardMode], extension: str) -> str:
+    def _get_profile_filename(
+        self: Scheduler, stage: Optional[ForwardMode], extension: str
+    ) -> str:
         if self.profile_prefix:
             stage_prefix = self.profile_prefix + "-"
         else:
@@ -54,12 +56,7 @@ class SchedulerProfilerMixin:
         if getattr(self, "moe_ep_size", 1) > 1:
             filename_parts.append(f"EP-{getattr(self, 'moe_ep_rank', 0)}")
 
-        return (
-            stage_prefix
-            + "-".join(filename_parts)
-            + stage_suffix
-            + extension
-        )
+        return stage_prefix + "-".join(filename_parts) + stage_suffix + extension
 
     def init_profiler(self: Scheduler):
         if envs.SGLANG_PROFILE_V2.get():
