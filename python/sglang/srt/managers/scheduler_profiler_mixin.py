@@ -169,12 +169,19 @@ class SchedulerProfilerMixin:
         if use_mlx():
             import mlx.core as mx
 
+            if self.torch_profiler_output_dir is None:
+                self.torch_profiler_output_dir = Path(
+                    os.getenv("SGLANG_TORCH_PROFILER_DIR", "/tmp")
+                ).expanduser()
+
+            os.makedirs(self.torch_profiler_output_dir, exist_ok=True)
+
             filename = self._get_profile_filename(stage, ".gputrace")
             trace_filename = os.path.join(
                 self.torch_profiler_output_dir,
                 filename,
             )
-            mx.metal.start_capture(trace_filename)
+            mx.metal.start_capture(str(trace_filename))
             self.profile_in_progress = True
             logger.info(f"MLX Metal capture started directly to {trace_filename}")
             return ProfileReqOutput(success=True, message="Succeeded")
