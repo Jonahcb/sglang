@@ -98,7 +98,9 @@ class AscendAttnMaskBuilder:
 
         # Initialize mixed chunk mask cache
         mixed_mask_len = 2048
-        self.allow_mixed_prefill_decode_batch_attn_mask = self.get_splitfuse_attn_mask(mixed_mask_len)
+        self.allow_mixed_prefill_decode_batch_attn_mask = self.get_splitfuse_attn_mask(
+            mixed_mask_len
+        )
 
         if use_mla:
             # Initialize RingMla mask
