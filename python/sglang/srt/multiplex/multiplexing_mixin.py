@@ -123,11 +123,16 @@ class SchedulerMultiplexMixin:
 
             with torch.cuda.stream(decode_stream):
                 set_pdmux_status(False)
-                self.current_decode_batch = self.update_current_decode_batch(self.current_decode_batch)
+                self.current_decode_batch = self.update_current_decode_batch(
+                    self.current_decode_batch
+                )
                 adjust_stream_group = adjust_stream_group or (
                     stream_idx > 0 and self.current_decode_batch.is_empty()
                 )
-                if self.current_decode_batch.is_empty() and self.split_prefill_batch is None:
+                if (
+                    self.current_decode_batch.is_empty()
+                    and self.split_prefill_batch is None
+                ):
                     self.on_idle()
 
             if adjust_stream_group:
@@ -144,7 +149,10 @@ class SchedulerMultiplexMixin:
             with torch.cuda.stream(decode_stream):
                 set_pdmux_status(False)
                 # process decode batch
-                if self.current_decode_batch and not self.current_decode_batch.is_empty():
+                if (
+                    self.current_decode_batch
+                    and not self.current_decode_batch.is_empty()
+                ):
                     decode_result = self.run_batch(self.current_decode_batch)
                     decode_done = True
                 else:
@@ -208,8 +216,13 @@ class SchedulerMultiplexMixin:
                         self.process_batch_result(
                             self.split_prefill_batch, prefill_result
                         )
-                        if self.current_decode_batch and not self.current_decode_batch.is_empty():
-                            self.current_decode_batch.merge_batch(self.split_prefill_batch)
+                        if (
+                            self.current_decode_batch
+                            and not self.current_decode_batch.is_empty()
+                        ):
+                            self.current_decode_batch.merge_batch(
+                                self.split_prefill_batch
+                            )
                         else:
                             self.current_decode_batch = self.split_prefill_batch
 

@@ -917,7 +917,9 @@ class Scheduler(
     def init_running_status(self):
         self.waiting_queue: List[Req] = []
         # The running decoding batch for continuous batching
-        self.current_decode_batch: ScheduleBatch = ScheduleBatch(reqs=[], batch_is_full=False)
+        self.current_decode_batch: ScheduleBatch = ScheduleBatch(
+            reqs=[], batch_is_full=False
+        )
         # The current forward batch
         self.cur_batch: Optional[ScheduleBatch] = None
         # The last forward batch
@@ -2325,7 +2327,9 @@ class Scheduler(
                     self.current_decode_batch = new_batch
                 else:
                     self.current_decode_batch.merge_batch(new_batch)
-                self.current_decode_batch.hisparse_coordinator = self.hisparse_coordinator
+                self.current_decode_batch.hisparse_coordinator = (
+                    self.hisparse_coordinator
+                )
             # Reset batch_is_full so the scheduler can schedule more prefills.
             self.current_decode_batch.batch_is_full = False
 
@@ -2389,8 +2393,14 @@ class Scheduler(
                 not self.current_decode_batch.is_empty()
                 and not self.current_decode_batch.is_prefill_only
             ):
-                self.current_decode_batch = self.update_current_decode_batch(self.current_decode_batch)
-                ret = self.current_decode_batch if not self.current_decode_batch.is_empty() else None
+                self.current_decode_batch = self.update_current_decode_batch(
+                    self.current_decode_batch
+                )
+                ret = (
+                    self.current_decode_batch
+                    if not self.current_decode_batch.is_empty()
+                    else None
+                )
             else:
                 ret = None
 
@@ -2526,7 +2536,9 @@ class Scheduler(
                         continue
 
             current_decode_bs = len(self.current_decode_batch.reqs)
-            if len(adder.can_run_list) >= self.get_num_allocatable_reqs(current_decode_bs):
+            if len(adder.can_run_list) >= self.get_num_allocatable_reqs(
+                current_decode_bs
+            ):
                 self.current_decode_batch.batch_is_full = True
             if self.disaggregation_mode == DisaggregationMode.PREFILL:
                 # In prefill mode, prealloc queue and transfer queue can also take memory,
@@ -2643,7 +2655,9 @@ class Scheduler(
         if (
             self.is_mixed_chunk
             and not self.current_decode_batch.is_empty()
-            and not (new_batch.return_logprob or self.current_decode_batch.return_logprob)
+            and not (
+                new_batch.return_logprob or self.current_decode_batch.return_logprob
+            )
             # mix_with_running cats input_ids but not input_embeds — shapes would mismatch
             and new_batch.input_embeds is None
         ):
@@ -2661,7 +2675,9 @@ class Scheduler(
 
         return new_batch
 
-    def update_current_decode_batch(self, batch: ScheduleBatch) -> Optional[ScheduleBatch]:
+    def update_current_decode_batch(
+        self, batch: ScheduleBatch
+    ) -> Optional[ScheduleBatch]:
         """Update the current running decoding batch."""
         initial_bs = batch.batch_size()
 

@@ -115,7 +115,9 @@ class SchedulePolicy:
         self.waiting_queue_radix_tree = RadixCache.create_simulated()
 
     def calc_priority(
-        self, waiting_queue: List[Req], current_decode_batch: Optional[ScheduleBatch] = None
+        self,
+        waiting_queue: List[Req],
+        current_decode_batch: Optional[ScheduleBatch] = None,
     ) -> bool:
         if self.policy == CacheAgnosticPolicy.FCFS:
             if self.enable_priority_scheduling:
@@ -153,7 +155,9 @@ class SchedulePolicy:
                 SchedulePolicy._sort_randomly(waiting_queue)
             elif policy == CacheAgnosticPolicy.ROUTING_KEY:
                 if current_decode_batch is not None:
-                    SchedulePolicy._sort_by_routing_key(waiting_queue, current_decode_batch)
+                    SchedulePolicy._sort_by_routing_key(
+                        waiting_queue, current_decode_batch
+                    )
             else:
                 raise ValueError(f"Unknown CacheAgnostic Policy: {policy=}")
         return prefix_computed
@@ -954,7 +958,9 @@ class PrefillAdder:
                 )
                 release_counter += 1
                 self.current_decode_batch.release_req(
-                    i, len(self.current_decode_batch.reqs) - release_counter, server_args
+                    i,
+                    len(self.current_decode_batch.reqs) - release_counter,
+                    server_args,
                 )
             else:
                 keep_indices.append(i)

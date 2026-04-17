@@ -1944,7 +1944,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             req.set_extend_input_len(1)
 
         input_ids = torch.cat([self.input_ids, current_decode_batch.input_ids])
-        out_cache_loc = torch.cat([self.out_cache_loc, current_decode_batch.out_cache_loc])
+        out_cache_loc = torch.cat(
+            [self.out_cache_loc, current_decode_batch.out_cache_loc]
+        )
 
         self.merge_batch(current_decode_batch)
         self.input_ids = input_ids

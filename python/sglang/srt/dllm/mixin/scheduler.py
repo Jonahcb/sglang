@@ -129,7 +129,9 @@ class SchedulerDllmMixin:
 
         return False
 
-    def _create_dllm_prefill_adder(self: Scheduler, current_decode_bs: int) -> PrefillAdder:
+    def _create_dllm_prefill_adder(
+        self: Scheduler, current_decode_bs: int
+    ) -> PrefillAdder:
         """Create a prefill adder configured for DLLM scheduling."""
         return PrefillAdder(
             self.page_size,
@@ -189,7 +191,10 @@ class SchedulerDllmMixin:
             self.process_dllm_incoming_reqs(adder, incoming_reqs)
 
     def _update_state_for_batch(
-        self: Scheduler, can_run_list: List[Req], adder: PrefillAdder, current_decode_bs: int
+        self: Scheduler,
+        can_run_list: List[Req],
+        adder: PrefillAdder,
+        current_decode_bs: int,
     ) -> None:
         """Update state for the batch."""
 
@@ -240,7 +245,9 @@ class SchedulerDllmMixin:
         for req in reqs:
             # Check if batch is full
             current_decode_bs = len(self.current_decode_batch.reqs)
-            if len(adder.can_run_list) >= self.get_num_allocatable_reqs(current_decode_bs):
+            if len(adder.can_run_list) >= self.get_num_allocatable_reqs(
+                current_decode_bs
+            ):
                 self.current_decode_batch.batch_is_full = True
 
             # Try preemption if batch is full

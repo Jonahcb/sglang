@@ -205,7 +205,9 @@ class TestPauseGenerationTensorConsistency(CustomTestCase):
             N + 1,
             "seq_lens is still N+1 after the second filter_batch early-return",
         )
-        self.assertNotEqual(len(current_decode_batch.reqs), current_decode_batch.seq_lens.shape[0])
+        self.assertNotEqual(
+            len(current_decode_batch.reqs), current_decode_batch.seq_lens.shape[0]
+        )
 
 
 if __name__ == "__main__":
