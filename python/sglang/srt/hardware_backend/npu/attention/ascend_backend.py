@@ -96,7 +96,7 @@ class AscendAttnMaskBuilder:
         mtp_mask_len = 2048
         self.mtp_mask = self.generate_mask_flag(mtp_mask_len).to(self.device)
 
-        # Initialize mixed chunk mask cache
+        # Initialize mixed prefill and decode batch mask cache
         mixed_mask_len = 2048
         self.allow_mixed_prefill_decode_batch_attn_mask = self.get_splitfuse_attn_mask(
             mixed_mask_len

@@ -2563,7 +2563,7 @@ class ServerArgs:
                 )
         if self.attention_backend == "dual_chunk_flash_attn":
             logger.warning(
-                "Mixed chunk and radix cache are disabled when using dual-chunk flash attention backend"
+                "Mixed prefill & decode batching and radix cache are disabled when using dual-chunk flash attention backend"
             )
             self.allow_mixed_prefill_decode_batch = False
             self.disable_radix_cache = True
@@ -3254,7 +3254,7 @@ class ServerArgs:
             if self.allow_mixed_prefill_decode_batch:
                 self.allow_mixed_prefill_decode_batch = False
                 logger.warning(
-                    "Mixed chunked prefill is disabled because of using dflash speculative decoding."
+                    "Mixed prefill & decode batching is disabled because of using dflash speculative decoding."
                 )
 
         if self.speculative_algorithm in ("EAGLE", "EAGLE3", "STANDALONE"):
@@ -3295,7 +3295,7 @@ class ServerArgs:
             if self.allow_mixed_prefill_decode_batch:
                 self.allow_mixed_prefill_decode_batch = False
                 logger.warning(
-                    "Mixed chunked prefill is disabled because of using "
+                    "Mixed prefill & decode batching is disabled because of using "
                     "eagle speculative decoding."
                 )
 
@@ -3404,7 +3404,7 @@ class ServerArgs:
                         f"speculative_num_draft_tokens - 1 ({self.speculative_num_draft_tokens - 1})."
                     )
             logger.warning(
-                "The overlap scheduler and mixed chunked prefill are disabled because of "
+                "The overlap scheduler and mixed prefill & decode batching are disabled because of "
                 "using ngram speculative decoding."
             )
 
@@ -3898,7 +3898,7 @@ class ServerArgs:
 
         if self.allow_mixed_prefill_decode_batch:
             logger.warning(
-                "Mixed chunked prefill is disabled because of using diffusion LLM inference."
+                "Mixed prefill & decode batching is disabled because of using diffusion LLM inference."
             )
             self.allow_mixed_prefill_decode_batch = False
 

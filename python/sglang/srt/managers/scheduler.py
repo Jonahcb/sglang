@@ -2647,7 +2647,7 @@ class Scheduler(
             # mix_with_running cats input_ids but not input_embeds — shapes would mismatch
             and new_batch.input_embeds is None
         ):
-            # TODO (lianmin): support return_logprob + mixed chunked prefill
+            # TODO (lianmin): support return_logprob + mixed prefill and decode batch
             self.running_batch.filter_batch(v1_spec_info_filtered=True)
             if not self.running_batch.is_empty():
                 self.running_batch.prepare_for_decode()
