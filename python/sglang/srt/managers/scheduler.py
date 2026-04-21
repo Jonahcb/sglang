@@ -2448,15 +2448,6 @@ class Scheduler(
         if self.enable_hierarchical_cache:
             self.tree_cache.check_hicache_events()
 
-        if self.enable_priority_preemption:
-            # Reset batch_is_full to try preemption with a prefill adder.
-            self.running_batch.batch_is_full = False
-
-        if (
-            self.running_batch.batch_is_full or len(self.waiting_queue) == 0
-        ) and self.chunked_req is None:
-            return None
-
         running_bs = len(self.running_batch.reqs)
 
         # Ignore the check if self.chunked_req is not None.
@@ -2464,13 +2455,14 @@ class Scheduler(
         # as the space for the chunked requests has just been released.
         # In PP case, chunked requests (or dllm requests) can start in one microbatch and end in another microbatch, so the max_running_requests per microbatch should not be strict.
         # Instead, we should always allow chunked requests to be added, otherwise, there will be a memory leak.
-        if (
-            self.get_num_allocatable_reqs(running_bs) <= 0
-            and self.chunked_req is None
-            and not self.enable_priority_preemption
-        ):
-            self.running_batch.batch_is_full = True
-            return None
+        if self.chunked_req is None:
+            if len(self.waiting_queue) == 0:
+                return None
+            if self.running_batch.batch_is_full and not self.enable_priority_preemption:
+                return None
+            if self.get_num_allocatable_reqs(running_bs) <= 0 and not self.enable_priority_preemption:
+                self.running_batch.batch_is_full = True
+                return None
 
         # Get priority queue
         self.policy.calc_priority(self.waiting_queue, self.running_batch)
