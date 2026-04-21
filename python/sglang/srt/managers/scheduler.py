@@ -2460,7 +2460,10 @@ class Scheduler(
                 return None
             if self.running_batch.batch_is_full and not self.enable_priority_preemption:
                 return None
-            if self.get_num_allocatable_reqs(running_bs) <= 0 and not self.enable_priority_preemption:
+            if (
+                self.get_num_allocatable_reqs(running_bs) <= 0
+                and not self.enable_priority_preemption
+            ):
                 self.running_batch.batch_is_full = True
                 return None
 
