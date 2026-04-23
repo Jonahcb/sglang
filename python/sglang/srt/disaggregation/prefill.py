@@ -371,10 +371,6 @@ class SchedulerDisaggregationPrefillMixin:
     def get_next_disagg_prefill_batch_to_run(
         self: Scheduler,
     ) -> Optional[ScheduleBatch]:
-        # HACK (byronhsu): reset the batch_is_full flag because we never enter update_running_batch which resets it
-        # Otherwise, it hangs under high concurrency
-        self.running_batch.batch_is_full = False
-
         self.process_prefill_chunk()
 
         batch = self.get_new_batch_prefill()

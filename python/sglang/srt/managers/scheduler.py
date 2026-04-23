@@ -2064,6 +2064,9 @@ class Scheduler(
             self._prefetch_kvcache(req)
             self.waiting_queue.append(req)
             req.time_stats.set_wait_queue_entry_time()
+            # A new waiting req may be cheaper than what last armed batch_is_full.
+            # Invalidate conservatively rather than tracking the cheapest-cost min.
+            self.running_batch.batch_is_full = False
         elif self.disaggregation_mode == DisaggregationMode.PREFILL:
             self._prefetch_kvcache(req)
             self.disagg_prefill_bootstrap_queue.add(
@@ -2367,9 +2370,8 @@ class Scheduler(
         # Runs outside the last_batch block so stale requests are cleaned
         # even when no new batches arrive (e.g. traffic stops).
         if self.running_batch.is_prefill_only:
+            # filter_batch auto-invalidates batch_is_full on any req removal.
             self.running_batch.filter_batch()
-            if self.running_batch.is_empty():
-                self.running_batch.batch_is_full = False
 
         if self.dllm_config is not None:
             new_batch = self.get_new_batch_dllm()
@@ -2675,11 +2677,9 @@ class Scheduler(
 
     def update_running_batch(self, batch: ScheduleBatch) -> Optional[ScheduleBatch]:
         """Update the current running decoding batch."""
-        initial_bs = batch.batch_size()
-
+        # filter_batch auto-invalidates batch_is_full on any req removal.
         batch.filter_batch(v1_spec_info_filtered=True)
         if batch.is_empty():
-            batch.batch_is_full = False
             return batch
 
         # Eagerly release lock_ref on completed write-through nodes so they
@@ -2751,9 +2751,6 @@ class Scheduler(
                 self.new_token_ratio - self.new_token_ratio_decay,
                 self.min_new_token_ratio,
             )
-
-        if batch.batch_size() < initial_bs:
-            batch.batch_is_full = False
 
         if batch.is_empty():
             return batch
@@ -3480,13 +3477,13 @@ class Scheduler(
         self.cur_batch = None
 
         if recv_req.mode == "retract" and not self.running_batch.is_empty():
+            # filter_batch / retract_all auto-invalidate batch_is_full.
             self.running_batch.filter_batch(v1_spec_info_filtered=True)
             if len(self.running_batch.reqs) != 0:
                 retracted_reqs = self.running_batch.retract_all(self.server_args)
                 for req in retracted_reqs:
                     self._add_request_to_queue(req)
 
-            self.running_batch.batch_is_full = False
             self.chunked_req = None
 
     def continue_generation(self, recv_req: ContinueGenerationReqInput):

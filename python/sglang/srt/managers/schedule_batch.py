@@ -2318,12 +2318,18 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
         if keep_indices is None or len(keep_indices) == 0:
             # Filter out all requests
+            if self.reqs:
+                # Reqs removed → prior "full" claim no longer reflects state.
+                self.batch_is_full = False
             self.reqs = []
             return
 
         if len(keep_indices) == len(self.reqs):
             # No need to filter
             return
+
+        # Reqs removed → prior "full" claim no longer reflects state.
+        self.batch_is_full = False
 
         keep_indices_device = torch.tensor(
             keep_indices,
@@ -2427,6 +2433,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
         if self.spec_info:
             self.spec_info.merge_batch(other.spec_info)
+
+        # Reqs added → prior "full" claim no longer reflects state.
+        self.batch_is_full = False
 
     def get_model_worker_batch(
         self, seq_lens_cpu_cache: Optional[torch.Tensor] = None
