@@ -721,9 +721,9 @@ class SchedulerDisaggregationPrefillMixin:
         return transferred_rids
 
     def process_prefill_chunk(self: Scheduler) -> None:
-        chunked_req_to_exclude = set()
+        reqs_to_exclude = set()
         if self.chunked_req:
-            chunked_req_to_exclude.add(self.chunked_req)
+            reqs_to_exclude.add(self.chunked_req)
             self.tree_cache.cache_unfinished_req(self.chunked_req, chunked=True)
             if self.enable_overlap:
                 # Delay KV transfer to process_batch_result_disagg_prefill when overlap is enabled to ensure results are resolved
@@ -739,11 +739,11 @@ class SchedulerDisaggregationPrefillMixin:
             if self.last_batch.chunked_req:
                 # In the context pipeline parallelism, after the last chunk, the current microbatch still track outdated chunked_req.
                 # We need to discard it.
-                chunked_req_to_exclude.add(self.last_batch.chunked_req)
+                reqs_to_exclude.add(self.last_batch.chunked_req)
 
             last_bs = self.last_batch.batch_size()
             self.last_batch.filter_batch(
-                chunked_req_to_exclude=list(chunked_req_to_exclude)
+                reqs_to_exclude=list(reqs_to_exclude)
             )
             if self.last_batch.batch_size() < last_bs:
                 self.running_batch.batch_is_full = False

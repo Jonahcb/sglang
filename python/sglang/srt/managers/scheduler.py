@@ -2263,7 +2263,7 @@ class Scheduler(
         for tokenized_req in recv_req:
             self.handle_embedding_request(tokenized_req)
 
-    def stash_chunked_request(self, req: Req):
+    def stash_unfinished_req(self, req: Req):
         self.tree_cache.cache_unfinished_req(req, chunked=True)
 
     def _build_hisparse_decode_batch(self, reqs):
@@ -2308,22 +2308,15 @@ class Scheduler(
     def get_next_batch_to_run(self) -> Optional[ScheduleBatch]:
         self._abort_on_waiting_timeout()
         self._abort_on_running_timeout()
-        if self.dllm_config is not None:
-            self.dllm_manager.filter_finished_reqs()
 
         # Merge the prefill batch into the running batch
-        chunked_req_to_exclude = set()
-
-        if self.dllm_config is not None and self.dllm_manager.any_staging_reqs():
-            chunked_req_to_exclude.update(self.dllm_manager.staging_queue)
-            for req in self.dllm_manager.staging_queue:
-                self.stash_chunked_request(req)
+        reqs_to_exclude = set()
 
         if self.chunked_req is not None:
             # Move the chunked request out of the batch so that we can merge
             # only finished requests to running_batch.
-            chunked_req_to_exclude.add(self.chunked_req)
-            self.stash_chunked_request(self.chunked_req)
+            reqs_to_exclude.add(self.chunked_req)
+            self.stash_unfinished_req(self.chunked_req)
 
         # HiSparse has its own prefill-to-decode transition; skip last_batch merge.
         if self.enable_hisparse:
@@ -2346,15 +2339,12 @@ class Scheduler(
             if self.last_batch.chunked_req is not None:
                 # In the context pipeline parallelism, after the last chunk, the current microbatch still track outdated chunked_req.
                 # We need to discard it.
-                chunked_req_to_exclude.add(self.last_batch.chunked_req)
-
-            if self.dllm_config is not None and self.last_batch.reqs:
-                chunked_req_to_exclude.update(self.last_batch.reqs)
+                reqs_to_exclude.add(self.last_batch.chunked_req)
 
             # Filter batch
             last_bs = self.last_batch.batch_size()
             self.last_batch.filter_batch(
-                chunked_req_to_exclude=list(chunked_req_to_exclude)
+                reqs_to_exclude=list(reqs_to_exclude)
             )
             if self.last_batch.batch_size() < last_bs:
                 self.running_batch.batch_is_full = False
@@ -2395,10 +2385,13 @@ class Scheduler(
             # Run prefill first if possible
             ret = new_batch
         else:
-            # Run decode (skip for prefill-only batches)
+            # Run decode (skip for prefill-only batches and dLLM, which has
+            # no decode forward — every dLLM step is an extend driven by
+            # get_new_batch_dllm).
             if (
                 not self.running_batch.is_empty()
                 and not self.running_batch.is_prefill_only
+                and self.dllm_config is None
             ):
                 self.running_batch = self.update_running_batch(self.running_batch)
                 ret = self.running_batch if not self.running_batch.is_empty() else None
@@ -3089,7 +3082,6 @@ class Scheduler(
         idle = (
             self.running_batch.is_empty()
             and self.chunked_req is None
-            and not self.dllm_manager.any_staging_reqs()
             and (self.last_batch is None or self.last_batch.is_empty())
             and (self.cur_batch is None or self.cur_batch.is_empty())
             and (not self.enable_overlap or len(self.result_queue) == 0)
@@ -3465,9 +3457,9 @@ class Scheduler(
             self.process_batch_result(tmp_batch, tmp_result)
 
         if self.last_batch and self.last_batch.forward_mode.is_extend():
-            chunked_req_to_exclude = set()
+            reqs_to_exclude = set()
             self.last_batch.filter_batch(
-                chunked_req_to_exclude=list(chunked_req_to_exclude)
+                reqs_to_exclude=list(reqs_to_exclude)
             )
             # Skip merge for disagg prefill: completed prefill requests are
             # already in disagg_prefill_inflight_queue. Merging them into
