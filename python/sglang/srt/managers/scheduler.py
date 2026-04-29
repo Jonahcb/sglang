@@ -23,7 +23,7 @@ from collections import deque
 from contextlib import nullcontext
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Deque, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple, Union
 
 from sglang.srt.utils.common import suppress_noisy_warnings
 
@@ -1007,19 +1007,6 @@ class Scheduler(
         self.session_controller = SessionController(self.tree_cache)
         self.forward_sleep_time = None
         self._engine_paused = False
-
-    def _admit(self, reqs: Union[Req, Iterable[Req]]) -> None:
-        if isinstance(reqs, Req):
-            self.admitted_reqs.add(reqs)
-        else:
-            self.admitted_reqs.update(reqs)
-
-    def _discharge(self, reqs: Union[Req, Iterable[Req]]) -> None:
-        if isinstance(reqs, Req):
-            self.admitted_reqs.discard(reqs)
-        else:
-            for req in reqs:
-                self.admitted_reqs.discard(req)
 
     def init_chunked_prefill(self):
         self.chunked_prefill_size = self.server_args.chunked_prefill_size
@@ -2696,7 +2683,7 @@ class Scheduler(
         can_run_set = set(can_run_list)
         self.waiting_queue = [x for x in self.waiting_queue if x not in can_run_set]
         if adder.preempt_list:
-            self._discharge(adder.preempt_list)
+            self.admitted_reqs.difference_update(adder.preempt_list)
             for req in adder.preempt_list:
                 self._add_request_to_queue(req)
 
@@ -2715,7 +2702,7 @@ class Scheduler(
 
         set_time_batch(can_run_list, "set_forward_entry_time")
 
-        self._admit(can_run_list)
+        self.admitted_reqs.update(can_run_list)
 
         # Create a new batch
         new_batch = ScheduleBatch.init_new(
@@ -2800,8 +2787,8 @@ class Scheduler(
             retracted_reqs, new_token_ratio, reqs_to_abort = batch.retract_decode(
                 self.server_args
             )
-            self._discharge(retracted_reqs)
-            self._discharge(reqs_to_abort)
+            self.admitted_reqs.difference_update(retracted_reqs)
+            self.admitted_reqs.difference_update(reqs_to_abort)
             new_available_tokens = self.token_to_kv_pool_allocator.available_size()
             new_token_gained = new_available_tokens - old_available_tokens
             mamba_num_gained = (
@@ -3456,7 +3443,7 @@ class Scheduler(
                 if self.enable_hisparse:
                     self.hisparse_coordinator.request_finished(req)
                 release_kv_cache(req, self.tree_cache)
-                self._discharge(req)
+                self.admitted_reqs.discard(req)
             # For disaggregation prefill mode, free the metadata buffer index
             if self.disaggregation_mode == DisaggregationMode.PREFILL:
                 release_req_to_metadata_buffer(
@@ -3469,7 +3456,7 @@ class Scheduler(
                 and self.disaggregation_mode != DisaggregationMode.DECODE
             ):
                 release_kv_cache(req, self.tree_cache, is_insert=False)
-                self._discharge(req)
+                self.admitted_reqs.discard(req)
             logger.debug(f"Abort queued request. {req.rid=}")
 
         # Delete the requests in the grammar queue

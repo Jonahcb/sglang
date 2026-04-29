@@ -1122,7 +1122,7 @@ class DecodeTransferQueue:
                     self.scheduler.hisparse_coordinator.request_finished(decode_req.req)
                 # release pre-allocated kv cache, but don't insert into the tree since it's failed
                 release_kv_cache(decode_req.req, self.tree_cache, is_insert=False)
-                self.scheduler._discharge(decode_req.req)
+                self.scheduler.admitted_reqs.discard(decode_req.req)
                 indices_to_remove.add(i)
                 if self.scheduler.enable_metrics:
                     self.scheduler.metrics_collector.increment_transfer_failed_reqs()
@@ -1143,7 +1143,7 @@ class DecodeTransferQueue:
                         release_kv_cache(
                             decode_req.req, self.tree_cache, is_insert=False
                         )
-                        self.scheduler._discharge(decode_req.req)
+                        self.scheduler.admitted_reqs.discard(decode_req.req)
                         if self.scheduler.enable_metrics:
                             self.scheduler.metrics_collector.increment_transfer_failed_reqs()
                     else:
@@ -1320,7 +1320,7 @@ class SchedulerDisaggregationDecodeMixin:
 
         set_time_batch(can_run_list, "set_forward_entry_time")
 
-        self._admit(can_run_list)
+        self.admitted_reqs.update(can_run_list)
 
         # construct a schedule batch with those requests and mark as decode
         new_batch = ScheduleBatch.init_new(

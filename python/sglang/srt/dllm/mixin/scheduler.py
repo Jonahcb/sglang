@@ -87,7 +87,7 @@ class SchedulerDllmMixin:
 
                 if req.finished():
                     release_kv_cache(req, self.tree_cache)
-                    self._discharge(req)
+                    self.admitted_reqs.discard(req)
                     req.time_stats.set_completion_time()
 
             self.stream_output(batch.reqs, batch.return_logprob)
@@ -195,12 +195,12 @@ class SchedulerDllmMixin:
         """Update state for the batch."""
 
         if adder.preempt_list:
-            self._discharge(adder.preempt_list)
+            self.admitted_reqs.difference_update(adder.preempt_list)
             for req in adder.preempt_list:
                 self._add_request_to_queue(req)
 
         if can_run_list:
-            self._admit(can_run_list)
+            self.admitted_reqs.update(can_run_list)
             self.dllm_manager.add_staging_reqs(can_run_list)
             self.dllm_manager.increment_chunked_count()
 
