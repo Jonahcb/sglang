@@ -95,6 +95,7 @@ class SchedulerOutputProcessorMixin:
                 if self.enable_hisparse:
                     self.hisparse_coordinator.request_finished(req)
                 release_kv_cache(req, self.tree_cache)
+                self._discharge(req)
 
         # Note: Logprobs should be handled on the prefill engine.
         self.stream_output(batch.reqs, batch.return_logprob)
@@ -197,6 +198,7 @@ class SchedulerOutputProcessorMixin:
                     if req.finished():
                         self.maybe_collect_routed_experts(req)
                         release_kv_cache(req, self.tree_cache)
+                        self._discharge(req)
                         req.time_stats.set_completion_time()
                     elif not batch.decoding_reqs or req not in batch.decoding_reqs:
                         self.tree_cache.cache_unfinished_req(req)
@@ -331,6 +333,7 @@ class SchedulerOutputProcessorMixin:
 
                     if req.finished():
                         release_kv_cache(req, self.tree_cache)
+                        self._discharge(req)
                         req.time_stats.set_completion_time()
                     else:
                         self.tree_cache.cache_unfinished_req(req)
@@ -571,10 +574,15 @@ class SchedulerOutputProcessorMixin:
                 # Asynchronously offload KV cache; release_kv_cache will be called after Device->Host transfer completes
                 if not self.decode_offload_manager.offload_kv_cache(req):
                     self.decode_offload_manager.finalize_release_on_finish(req)
+                # Discharge admission immediately on finish: the slot is logically
+                # released for capacity accounting even if the async offload
+                # delays the actual release_kv_cache call.
+                self._discharge(req)
             else:
                 if self.enable_hisparse:
                     self.hisparse_coordinator.request_finished(req)
                 release_kv_cache(req, self.tree_cache)
+                self._discharge(req)
 
             req.time_stats.set_completion_time()
 

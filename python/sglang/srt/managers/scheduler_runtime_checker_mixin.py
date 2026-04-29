@@ -141,19 +141,18 @@ class SchedulerRuntimeCheckerMixin:
         )
 
     def _active_pool_idxs(self: Scheduler) -> set:
-        """Pool idxs currently owned by reqs in last_batch / running_batch.
+        """Pool idxs currently owned by admitted reqs.
 
         Used to decide which session slots' KV is owned by batch reqs
         (and thus counted via uncached_size, not session_held).
+        admitted_reqs is the unified ledger across modes (AR, dllm,
+        chunked prefill, disagg prebuilt).
         """
-        idxs = set()
-        for batch in [self.last_batch, self.running_batch]:
-            if batch is None or batch.is_empty():
-                continue
-            for req in batch.reqs:
-                if req.req_pool_idx is not None:
-                    idxs.add(req.req_pool_idx)
-        return idxs
+        return {
+            req.req_pool_idx
+            for req in self.admitted_reqs
+            if req.req_pool_idx is not None
+        }
 
     def _session_held_tokens(self: Scheduler) -> int:
         return self.tree_cache.session_held_tokens(self._active_pool_idxs())
@@ -369,40 +368,30 @@ class SchedulerRuntimeCheckerMixin:
         return leak, msg
 
     def _get_total_uncached_sizes(self: Scheduler) -> Tuple[int, int]:
-        """Sum uncached tokens for full and SWA pools across all active batches.
+        """Sum uncached tokens for full and SWA pools across all admitted reqs.
 
         Returns (full_uncached, swa_uncached). For non-SWA models, swa_uncached is 0.
 
         For full pool: uncached = allocated - cache_protected_len
         For SWA pool:  uncached = allocated - max(cache_protected_len, swa_evicted_seqlen)
         """
-        # After decode: running_batch IS last_batch (same object), count once.
-        # After prefill: they differ, both hold uncached tokens.
-        batches = [self.last_batch]
-        if (
-            self.running_batch not in (None, self.last_batch)
-            and not self.running_batch.is_empty()
-        ):
-            batches.append(self.running_batch)
-
         full_uncached = 0
         swa_uncached = 0
-        for batch in batches:
-            for req in batch.reqs:
-                assert req.kv_committed_freed == req.kv_overallocated_freed
-                if req.kv_committed_freed or req.req_pool_idx is None:
-                    continue
+        for req in self.admitted_reqs:
+            assert req.kv_committed_freed == req.kv_overallocated_freed
+            if req.kv_committed_freed or req.req_pool_idx is None:
+                continue
 
-                allocated_len = req.kv_allocated_len
-                if self.page_size > 1:
-                    allocated_len = ceil_align(allocated_len, self.page_size)
-                    assert req.cache_protected_len % self.page_size == 0
+            allocated_len = req.kv_allocated_len
+            if self.page_size > 1:
+                allocated_len = ceil_align(allocated_len, self.page_size)
+                assert req.cache_protected_len % self.page_size == 0
 
-                full_uncached += allocated_len - req.cache_protected_len
-                if self.is_hybrid_swa:
-                    swa_uncached += allocated_len - max(
-                        req.cache_protected_len, req.swa_evicted_seqlen
-                    )
+            full_uncached += allocated_len - req.cache_protected_len
+            if self.is_hybrid_swa:
+                swa_uncached += allocated_len - max(
+                    req.cache_protected_len, req.swa_evicted_seqlen
+                )
 
         return full_uncached, swa_uncached
 
@@ -502,7 +491,7 @@ class SchedulerRuntimeCheckerMixin:
 
         priority_enabled = self.enable_priority_scheduling
         self.stats.num_running_reqs = QueueCount.from_reqs(
-            self.running_batch.reqs, priority_enabled
+            list(self.admitted_reqs), priority_enabled
         )
         self.stats.gen_throughput = 0
         self.stats.num_queue_reqs = QueueCount.from_reqs(

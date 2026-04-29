@@ -662,7 +662,7 @@ class DecodePreallocQueue:
         # Otherwise it is possible for one request running decode out of memory, while all other requests are in the transfer queue that cannot be retracted.
         retractable_tokens = sum(
             len(r.origin_input_ids) + len(r.output_ids)
-            for r in self.scheduler.running_batch.reqs
+            for r in self.scheduler.admitted_reqs
         )
         allocatable_tokens = self._allocatable_tokens(
             retractable_tokens=retractable_tokens, count_retracted=True
@@ -836,11 +836,11 @@ class DecodePreallocQueue:
                     min(x.sampling_params.max_new_tokens, CLIP_MAX_NEW_TOKEN)
                     + len(x.origin_input_ids)
                     - retractable_tokens
-                    for x in self.scheduler.running_batch.reqs
+                    for x in self.scheduler.admitted_reqs
                 ]
             )
             if retractable_tokens is not None
-            and len(self.scheduler.running_batch.reqs) > 0
+            and len(self.scheduler.admitted_reqs) > 0
             else 0
         )
         if self.scheduler.enable_hisparse:
@@ -855,7 +855,7 @@ class DecodePreallocQueue:
             # preserve some space for future decode
             self.num_reserved_decode_tokens
             * (
-                len(self.scheduler.running_batch.reqs)
+                len(self.scheduler.admitted_reqs)
                 + len(self.transfer_queue.queue)
                 + len(self.scheduler.waiting_queue)
             ),
@@ -1122,6 +1122,7 @@ class DecodeTransferQueue:
                     self.scheduler.hisparse_coordinator.request_finished(decode_req.req)
                 # release pre-allocated kv cache, but don't insert into the tree since it's failed
                 release_kv_cache(decode_req.req, self.tree_cache, is_insert=False)
+                self.scheduler._discharge(decode_req.req)
                 indices_to_remove.add(i)
                 if self.scheduler.enable_metrics:
                     self.scheduler.metrics_collector.increment_transfer_failed_reqs()
@@ -1142,6 +1143,7 @@ class DecodeTransferQueue:
                         release_kv_cache(
                             decode_req.req, self.tree_cache, is_insert=False
                         )
+                        self.scheduler._discharge(decode_req.req)
                         if self.scheduler.enable_metrics:
                             self.scheduler.metrics_collector.increment_transfer_failed_reqs()
                     else:
@@ -1317,6 +1319,11 @@ class SchedulerDisaggregationDecodeMixin:
             return None
 
         set_time_batch(can_run_list, "set_forward_entry_time")
+
+        # Admit prebuilt-decode reqs into the admission ledger. KV was already
+        # allocated upstream in the prealloc queue; this is the point where the
+        # scheduler takes over their lifecycle.
+        self._admit(can_run_list)
 
         # construct a schedule batch with those requests and mark as decode
         new_batch = ScheduleBatch.init_new(

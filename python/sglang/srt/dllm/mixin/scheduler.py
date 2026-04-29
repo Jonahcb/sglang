@@ -87,6 +87,7 @@ class SchedulerDllmMixin:
 
                 if req.finished():
                     release_kv_cache(req, self.tree_cache)
+                    self._discharge(req)
                     req.time_stats.set_completion_time()
 
             self.stream_output(batch.reqs, batch.return_logprob)
@@ -194,10 +195,16 @@ class SchedulerDllmMixin:
         """Update state for the batch."""
 
         if adder.preempt_list:
+            # KV already released in PrefillAdder.preempt_to_schedule; drop
+            # them from the admission ledger before re-queueing.
+            self._discharge(adder.preempt_list)
             for req in adder.preempt_list:
                 self._add_request_to_queue(req)
 
         if can_run_list:
+            # Admission ledger: dllm reqs hold KV like any other admitted req.
+            # Idempotent for reqs already admitted from a previous denoise round.
+            self._admit(can_run_list)
             self.dllm_manager.add_staging_reqs(can_run_list)
             self.dllm_manager.increment_chunked_count()
 

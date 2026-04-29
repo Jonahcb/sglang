@@ -550,6 +550,7 @@ class SchedulerDisaggregationPrefillMixin:
                         # This can happen if the grammar is not set correctly or the token is invalid.
                         error_message = f"Grammar accept_token failed for req {req.rid} with token {next_token_id}: {e}"
                         release_kv_cache(req, self.tree_cache)
+                        self._discharge(req)
                         prepare_abort(
                             req,
                             error_message,
@@ -633,6 +634,7 @@ class SchedulerDisaggregationPrefillMixin:
                 undone_reqs.append(req)
             elif poll == KVPoll.Success:  # transfer done
                 release_kv_cache(req, self.tree_cache)  # unlock the tree
+                self._discharge(req)
                 req.finished_reason = FINISH_LENGTH(length=0)
                 # FIXME: clean up req's data in transfer engine
                 if hasattr(req.disagg_kv_sender, "clear"):
@@ -648,6 +650,7 @@ class SchedulerDisaggregationPrefillMixin:
                 logger.warning(error_message)
                 req.time_stats.trace_ctx.abort(abort_info={"reason": error_message})
                 release_kv_cache(req, self.tree_cache)  # unlock the tree
+                self._discharge(req)
                 prepare_abort(
                     req, error_message, status_code=HTTPStatus.INTERNAL_SERVER_ERROR
                 )
