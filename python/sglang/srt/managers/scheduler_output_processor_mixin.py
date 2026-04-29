@@ -574,9 +574,6 @@ class SchedulerOutputProcessorMixin:
                 # Asynchronously offload KV cache; release_kv_cache will be called after Device->Host transfer completes
                 if not self.decode_offload_manager.offload_kv_cache(req):
                     self.decode_offload_manager.finalize_release_on_finish(req)
-                # Discharge admission immediately on finish: the slot is logically
-                # released for capacity accounting even if the async offload
-                # delays the actual release_kv_cache call.
                 self._discharge(req)
             else:
                 if self.enable_hisparse:

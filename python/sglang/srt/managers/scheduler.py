@@ -992,17 +992,8 @@ class Scheduler(
 
     def init_running_status(self):
         self.waiting_queue: List[Req] = []
-        # The running decoding batch for continuous batching.
-        # Holds the persistent GPU tensor state (seq_lens, input_ids, sampling info, ...)
-        # that is mutated in-place each AR decode step. AR-only — dllm and other
-        # modes that rebuild their per-forward batch do not put reqs here.
+        # The running decoding batch for continuous batching
         self.running_batch: ScheduleBatch = ScheduleBatch(reqs=[], batch_is_full=False)
-        # The set of requests currently holding req_to_token_pool slots and KV pages,
-        # regardless of mode (AR prefill, AR decode, chunked prefill, dllm prefill,
-        # dllm decode, disagg prebuilt, ...). This is the single source of truth
-        # for "who's admitted" and is the right thing to consult for capacity
-        # accounting, LoRA tracking, retract decisions, and the #running-req metric.
-        # See _admit / _discharge for lifecycle hooks.
         self.admitted_reqs: Set[Req] = set()
         # The current forward batch
         self.cur_batch: Optional[ScheduleBatch] = None
@@ -1018,23 +1009,12 @@ class Scheduler(
         self._engine_paused = False
 
     def _admit(self, reqs: Union[Req, Iterable[Req]]) -> None:
-        """Mark requests as holding KV/req_pool resources.
-
-        Idempotent: re-admitting an already-admitted req is a no-op (chunked
-        prefill re-enters this path each chunk; dllm re-stages each round).
-        """
         if isinstance(reqs, Req):
             self.admitted_reqs.add(reqs)
         else:
             self.admitted_reqs.update(reqs)
 
     def _discharge(self, reqs: Union[Req, Iterable[Req]]) -> None:
-        """Mark requests as no longer holding KV/req_pool resources.
-
-        Tolerant of double-discharge: a req may be released through several
-        paths (finish + abort race, retract that also aborts). discard() is
-        a no-op when the req isn't currently admitted.
-        """
         if isinstance(reqs, Req):
             self.admitted_reqs.discard(reqs)
         else:
@@ -1461,8 +1441,6 @@ class Scheduler(
             return
 
         deadline = time.perf_counter() - timeout_s
-        # Iterate the admission ledger so this catches dllm staging / chunked
-        # prefill / disagg prebuilt reqs too, not just AR decode reqs.
         for req in self.admitted_reqs:
             if not req.finished() and 0 < req.time_stats.forward_entry_time < deadline:
                 req.to_finish = FINISH_ABORT(
@@ -2430,10 +2408,6 @@ class Scheduler(
         # Merge the prefill batch into the running batch
         chunked_req_to_exclude = set()
 
-        # Dllm runs its own prefill→decode lifecycle via dllm_manager and
-        # rebuilds a fresh ScheduleBatch each forward, so it does NOT flow
-        # through the running_batch merge below. Stash dllm staging reqs so
-        # their KV is preserved across the next round.
         if self.dllm_config is not None and self.dllm_manager.any_staging_reqs():
             for req in self.dllm_manager.staging_queue:
                 self.stash_chunked_request(req)
@@ -2722,9 +2696,6 @@ class Scheduler(
         can_run_set = set(can_run_list)
         self.waiting_queue = [x for x in self.waiting_queue if x not in can_run_set]
         if adder.preempt_list:
-            # Preemption already released the KV inside PrefillAdder via
-            # running_batch.release_req. Drop them from the admission ledger;
-            # they will be re-admitted when re-prefilled.
             self._discharge(adder.preempt_list)
             for req in adder.preempt_list:
                 self._add_request_to_queue(req)
@@ -2744,8 +2715,6 @@ class Scheduler(
 
         set_time_batch(can_run_list, "set_forward_entry_time")
 
-        # Admit reqs before KV allocation in prepare_for_extend below.
-        # Idempotent for chunked reqs that were already admitted in a prior chunk.
         self._admit(can_run_list)
 
         # Create a new batch
@@ -2831,9 +2800,6 @@ class Scheduler(
             retracted_reqs, new_token_ratio, reqs_to_abort = batch.retract_decode(
                 self.server_args
             )
-            # retract_decode released KV for both groups; drop them from the
-            # admission ledger so capacity accounting reflects the freed slots.
-            # Retracted reqs will be re-admitted when they re-enter prefill.
             self._discharge(retracted_reqs)
             self._discharge(reqs_to_abort)
             new_available_tokens = self.token_to_kv_pool_allocator.available_size()
@@ -3214,8 +3180,6 @@ class Scheduler(
         # disagg queues (bootstrap/prealloc/transfer) may have items without
         # any request actually running on GPU — e.g. stuck handshake, full
         # KV cache, or stalled transfer — so they can't carry health info.
-        # admitted_reqs unifies running_batch / chunked_req / dllm staging /
-        # disagg prebuilt — anything currently holding KV.
         idle = (
             len(self.admitted_reqs) == 0
             and (self.last_batch is None or self.last_batch.is_empty())
@@ -3557,10 +3521,7 @@ class Scheduler(
                         remaining_retracted.append(decode_req)
                 self.disagg_decode_prealloc_queue.retracted_queue = remaining_retracted
 
-        # Delete requests in the running batch.
-        # admitted_reqs is the unified ledger across AR decode / chunked prefill /
-        # dllm staging / disagg prebuilt — anything currently holding resources
-        # and therefore abortable. The downstream finish path will discharge.
+        # Delete requests in the running batch
         for req in self.admitted_reqs:
             if not req.finished() and (
                 recv_req.abort_all or req.rid.startswith(recv_req.rid)

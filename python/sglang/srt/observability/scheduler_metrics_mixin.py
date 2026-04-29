@@ -736,8 +736,7 @@ class SchedulerMetricsMixin:
                         for req in batch.reqs:
                             if hasattr(req, "lora_id") and req.lora_id is not None:
                                 active_lora_ids.add(req.lora_id)
-            # For normal mode, walk the unified admission ledger so dllm /
-            # chunked prefill / disagg prebuilt reqs all contribute.
+            # For normal mode, check admitted reqs
             elif hasattr(self, "admitted_reqs"):
                 for req in self.admitted_reqs:
                     if hasattr(req, "lora_id") and req.lora_id is not None:

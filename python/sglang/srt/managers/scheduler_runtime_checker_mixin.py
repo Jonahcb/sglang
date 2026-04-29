@@ -141,12 +141,10 @@ class SchedulerRuntimeCheckerMixin:
         )
 
     def _active_pool_idxs(self: Scheduler) -> set:
-        """Pool idxs currently owned by admitted reqs.
+        """Pool idxs currently owned by reqs in last_batch / running_batch.
 
         Used to decide which session slots' KV is owned by batch reqs
         (and thus counted via uncached_size, not session_held).
-        admitted_reqs is the unified ledger across modes (AR, dllm,
-        chunked prefill, disagg prebuilt).
         """
         return {
             req.req_pool_idx
@@ -368,7 +366,7 @@ class SchedulerRuntimeCheckerMixin:
         return leak, msg
 
     def _get_total_uncached_sizes(self: Scheduler) -> Tuple[int, int]:
-        """Sum uncached tokens for full and SWA pools across all admitted reqs.
+        """Sum uncached tokens for full and SWA pools across all active batches.
 
         Returns (full_uncached, swa_uncached). For non-SWA models, swa_uncached is 0.
 

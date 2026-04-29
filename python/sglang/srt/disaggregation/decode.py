@@ -1320,9 +1320,6 @@ class SchedulerDisaggregationDecodeMixin:
 
         set_time_batch(can_run_list, "set_forward_entry_time")
 
-        # Admit prebuilt-decode reqs into the admission ledger. KV was already
-        # allocated upstream in the prealloc queue; this is the point where the
-        # scheduler takes over their lifecycle.
         self._admit(can_run_list)
 
         # construct a schedule batch with those requests and mark as decode
