@@ -373,7 +373,7 @@ class SchedulerDisaggregationPrefillMixin:
     ) -> Optional[ScheduleBatch]:
         # HACK (byronhsu): reset the batch_is_full flag because we never enter update_running_batch which resets it
         # Otherwise, it hangs under high concurrency
-        self.running_batch.batch_is_full = False
+        self.admission_full = False
 
         self.process_prefill_chunk()
 
@@ -736,7 +736,7 @@ class SchedulerDisaggregationPrefillMixin:
                 )
             else:
                 self.send_kv_chunk(self.chunked_req)
-            self.running_batch.batch_is_full = False
+            self.admission_full = False
 
         if self.last_batch and self.last_batch.forward_mode.is_extend():
             if self.last_batch.chunked_req:
@@ -749,7 +749,7 @@ class SchedulerDisaggregationPrefillMixin:
                 chunked_req_to_exclude=list(chunked_req_to_exclude)
             )
             if self.last_batch.batch_size() < last_bs:
-                self.running_batch.batch_is_full = False
+                self.admission_full = False
 
     def send_kv_chunk(
         self: Scheduler,

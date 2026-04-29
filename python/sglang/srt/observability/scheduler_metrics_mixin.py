@@ -725,22 +725,13 @@ class SchedulerMetricsMixin:
             mem_pool = lora_manager.memory_pool
             slots_total = mem_pool.max_loras_per_batch
 
-            # Calculate active adapters from running batch
-            # This gives a true measure of current load for autoscaling purposes
-            active_lora_ids = set()
-
-            # For PP mode, check all running micro batches
-            if hasattr(self, "running_mbs") and self.running_mbs:
-                for batch in self.running_mbs:
-                    if batch and hasattr(batch, "reqs"):
-                        for req in batch.reqs:
-                            if hasattr(req, "lora_id") and req.lora_id is not None:
-                                active_lora_ids.add(req.lora_id)
-            # For normal mode, check admitted reqs
-            elif hasattr(self, "admitted_reqs"):
-                for req in self.admitted_reqs:
-                    if hasattr(req, "lora_id") and req.lora_id is not None:
-                        active_lora_ids.add(req.lora_id)
+            # Calculate active adapters from admitted reqs (covers PP since
+            # admitted_reqs unions across all microbatches).
+            active_lora_ids = {
+                req.lora_id
+                for req in getattr(self, "admitted_reqs", ())
+                if getattr(req, "lora_id", None) is not None
+            }
 
             # Count active adapters (excluding None for base model)
             slots_used = len(active_lora_ids)

@@ -1361,11 +1361,6 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     model_config: ModelConfig = None
     forward_mode: ForwardMode = None
     enable_overlap: bool = False
-    # Tell whether the current running batch is full so that we can skip
-    # the check of whether to prefill new requests.
-    # This is an optimization to reduce the overhead of the prefill check.
-    batch_is_full: bool = False
-
     # For chunked prefill in PP
     chunked_req: Optional[Req] = None
 

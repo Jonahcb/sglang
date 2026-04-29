@@ -993,8 +993,9 @@ class Scheduler(
     def init_running_status(self):
         self.waiting_queue: List[Req] = []
         # The running decoding batch for continuous batching
-        self.running_batch: ScheduleBatch = ScheduleBatch(reqs=[], batch_is_full=False)
+        self.running_batch: ScheduleBatch = ScheduleBatch(reqs=[])
         self.admitted_reqs: Set[Req] = set()
+        self.admission_full: bool = False
         # The current forward batch
         self.cur_batch: Optional[ScheduleBatch] = None
         # The last forward batch
@@ -1423,8 +1424,6 @@ class Scheduler(
         # as current spec-v1 still filters batch inside verify stage.
         timeout_s = envs.SGLANG_REQ_RUNNING_TIMEOUT.get()
         if timeout_s <= 0:
-            return
-        if not self.admitted_reqs:
             return
 
         deadline = time.perf_counter() - timeout_s
@@ -2416,7 +2415,7 @@ class Scheduler(
                     self.running_batch.merge_batch(new_batch)
                 self.running_batch.hisparse_coordinator = self.hisparse_coordinator
             # Reset batch_is_full so the scheduler can schedule more prefills.
-            self.running_batch.batch_is_full = False
+            self.admission_full = False
 
         if (
             not self.enable_hisparse
@@ -2435,7 +2434,7 @@ class Scheduler(
                 chunked_req_to_exclude=list(chunked_req_to_exclude)
             )
             if self.last_batch.batch_size() < last_bs:
-                self.running_batch.batch_is_full = False
+                self.admission_full = False
 
             # Merge the new batch into the running batch.
             if not self.last_batch.is_empty():
@@ -2453,7 +2452,7 @@ class Scheduler(
         if self.running_batch.is_prefill_only:
             self.running_batch.filter_batch()
             if self.running_batch.is_empty():
-                self.running_batch.batch_is_full = False
+                self.admission_full = False
 
         if self.dllm_config is not None:
             new_batch = self.get_new_batch_dllm()
@@ -2532,10 +2531,10 @@ class Scheduler(
 
         if self.enable_priority_preemption:
             # Reset batch_is_full to try preemption with a prefill adder.
-            self.running_batch.batch_is_full = False
+            self.admission_full = False
 
         if (
-            self.running_batch.batch_is_full or len(self.waiting_queue) == 0
+            self.admission_full or len(self.waiting_queue) == 0
         ) and self.chunked_req is None:
             return None
 
@@ -2551,7 +2550,7 @@ class Scheduler(
             and self.chunked_req is None
             and not self.enable_priority_preemption
         ):
-            self.running_batch.batch_is_full = True
+            self.admission_full = True
             return None
 
         # Get priority queue
@@ -2616,14 +2615,14 @@ class Scheduler(
 
             running_bs = len(self.running_batch.reqs)
             if len(adder.can_run_list) >= self.get_num_allocatable_reqs(running_bs):
-                self.running_batch.batch_is_full = True
+                self.admission_full = True
             if self.disaggregation_mode == DisaggregationMode.PREFILL:
                 # In prefill mode, prealloc queue and transfer queue can also take memory,
                 # so we need to check if the available size for the actual available size.
                 if len(adder.can_run_list) >= self.req_to_token_pool.available_size():
-                    self.running_batch.batch_is_full = True
+                    self.admission_full = True
 
-            if self.running_batch.batch_is_full:
+            if self.admission_full:
                 if (
                     not self.enable_priority_preemption
                     or not adder.preempt_to_schedule(req, self.server_args)
@@ -2654,11 +2653,11 @@ class Scheduler(
                 if res == AddReqResult.NO_TOKEN:
                     if self.enable_hierarchical_cache:
                         # Set batch_is_full after making sure there are requests that can be served
-                        self.running_batch.batch_is_full = len(
+                        self.admission_full = len(
                             adder.can_run_list
                         ) > 0 or (not self.running_batch.is_empty())
                     else:
-                        self.running_batch.batch_is_full = True
+                        self.admission_full = True
                 # revert matched mamba idx to avoid memory leak, if req is not added.
                 # Only free if the slot was freshly allocated in this batch (not
                 # pre-existing from a session). Session-held slots have their own
@@ -2752,9 +2751,7 @@ class Scheduler(
                 self.running_batch.prepare_for_decode()
                 new_batch.mix_with_running(self.running_batch)
                 new_batch.decoding_reqs = self.running_batch.reqs
-            self.running_batch = ScheduleBatch(
-                reqs=[], batch_is_full=self.running_batch.batch_is_full
-            )
+            self.running_batch = ScheduleBatch(reqs=[])
         else:
             new_batch.decoding_reqs = None
 
@@ -2766,7 +2763,7 @@ class Scheduler(
 
         batch.filter_batch(v1_spec_info_filtered=True)
         if batch.is_empty():
-            batch.batch_is_full = False
+            self.admission_full = False
             return batch
 
         # Eagerly release lock_ref on completed write-through nodes so they
@@ -2842,7 +2839,7 @@ class Scheduler(
             )
 
         if batch.batch_size() < initial_bs:
-            batch.batch_is_full = False
+            self.admission_full = False
 
         if batch.is_empty():
             return batch
@@ -3568,7 +3565,7 @@ class Scheduler(
                 for req in retracted_reqs:
                     self._add_request_to_queue(req)
 
-            self.running_batch.batch_is_full = False
+            self.admission_full = False
             self.chunked_req = None
 
     def continue_generation(self, recv_req: ContinueGenerationReqInput):
