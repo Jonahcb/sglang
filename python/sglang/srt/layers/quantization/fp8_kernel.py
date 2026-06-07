@@ -1717,7 +1717,16 @@ if _is_hip:
                 else:
                     _native_dynamic_per_token_quant_fp8(output, input, scale)
             else:
-                scale = torch.zeros(1, device=input.device, dtype=torch.float32)
+                # NOTE: scale need not be pre-zeroed here. All three backends
+                # overwrite scale[0] before reading it: aiter's
+                # dynamic_per_tensor_quant runs initializeScale() (zero) then an
+                # atomicMax reduction internally; vLLM's dynamic_scaled_fp8_quant
+                # computes+writes the scale itself; and the native fallback does
+                # scale.copy_(absmax/fp8_max). Using torch.empty avoids an extra
+                # FillFunctor<float> launch per quantized linear (significant on
+                # small models like the DFlash draft, where ~40 such launches per
+                # forward dominated the elementwise time). See dflash_quant notes.
+                scale = torch.empty(1, device=input.device, dtype=torch.float32)
                 if _use_aiter:
                     dynamic_per_tensor_quant(output, input, scale)
                 elif _has_vllm:

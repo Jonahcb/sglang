@@ -22,6 +22,45 @@ from sglang.srt.utils import get_bool_env_var, is_hip, set_weight_attrs
 
 __all__ = ["QuarkW8A8Fp8"]
 
+# --- env-gated fp8 dispatch trace (verify quark kernels under cuda graph) ----
+# Set QUARK_FP8_TRACE=/path.jsonl to append one record per apply_weights call.
+# Each record carries `capturing` = torch.cuda.is_current_stream_capturing(), so
+# you can confirm the fp8 path is recorded INTO the graph during capture (any
+# call with capturing=True is guaranteed to relaunch on every graph replay).
+import json as _json
+import os as _os
+import threading as _threading
+
+_QFP8_TRACE_PATH = _os.environ.get("QUARK_FP8_TRACE", "").strip()
+_QFP8_LOCK = _threading.Lock()
+_QFP8_COUNTER = 0
+
+
+def _qfp8_trace(layer, x) -> None:
+    if not _QFP8_TRACE_PATH:
+        return
+    global _QFP8_COUNTER
+    try:
+        capturing = bool(torch.cuda.is_current_stream_capturing())
+    except Exception:
+        capturing = False
+    with _QFP8_LOCK:
+        _QFP8_COUNTER += 1
+        n = _QFP8_COUNTER
+    rec = {
+        "n": n,
+        "capturing": capturing,
+        "prefix": getattr(layer, "prefix", None),
+        "w_shape": list(layer.weight.shape),
+        "x_shape": list(x.shape),
+    }
+    try:
+        with open(_QFP8_TRACE_PATH, "a") as f:
+            f.write(_json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
 _is_fp8_fnuz = is_fp8_fnuz()
 _is_hip = is_hip()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
@@ -175,6 +214,7 @@ class QuarkW8A8Fp8(QuarkLinearScheme):
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
+        _qfp8_trace(layer, x)
         return apply_fp8_linear(
             x,
             layer.weight,

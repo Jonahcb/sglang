@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import math
 from copy import deepcopy
@@ -34,6 +35,68 @@ from sglang.srt.utils import is_cuda
 logger = logging.getLogger(__name__)
 
 _FusedKVMaterializeHelper = None
+
+# --- DFLASH draft-output dump (debug only; env-gated, zero overhead when off) ---
+# Set DFLASH_DUMP_DRAFT=/path/to/file.jsonl to append one JSON line per draft
+# iteration: the proposed draft tokens plus a fingerprint (mean/std/sum) of the
+# draft hidden states. Run once with CUDA graph and once with --disable-cuda-graph
+# and diff the files. Iteration 0 has identical inputs in both runs (temp=0, same
+# prompt), so its output MUST match if the draft graph replays correctly. If the
+# graph draft is empty, its fingerprints are constant/stale across iterations.
+import json as _json
+import os as _os
+
+_DFLASH_DUMP_PATH = _os.environ.get("DFLASH_DUMP_DRAFT")
+_dflash_dump_iter = 0
+
+
+def _dump_draft_output(draft_hidden, draft_tokens):
+    global _dflash_dump_iter
+    if not _DFLASH_DUMP_PATH:
+        return
+    try:
+        h = draft_hidden.detach().float()
+        tok = draft_tokens.detach().cpu()
+        # cols 1: are the draft's own proposals (col 0 is copied in externally)
+        proposals = tok[:, 1:]
+        rec = {
+            "iter": _dflash_dump_iter,
+            "hidden_shape": list(draft_hidden.shape),
+            "hidden_dtype": str(draft_hidden.dtype),
+            "hidden_mean": h.mean().item(),
+            "hidden_std": h.std().item(),
+            "hidden_sum": h.sum().item(),
+            "hidden_absmax": h.abs().max().item(),
+            "proposal_nonzero": int((proposals != 0).sum().item()),
+            "proposal_total": int(proposals.numel()),
+            "draft_tokens": tok.tolist(),
+        }
+        with open(_DFLASH_DUMP_PATH, "a") as f:
+            f.write(_json.dumps(rec) + "\n")
+        if _dflash_dump_iter < 3:
+            print(
+                f"[DFLASH-DUMP iter={rec['iter']}] dtype={rec['hidden_dtype']} "
+                f"absmax={rec['hidden_absmax']:.4g} std={rec['hidden_std']:.4g} "
+                f"proposals_nonzero={rec['proposal_nonzero']}/{rec['proposal_total']}",
+                flush=True,
+            )
+    except Exception as e:  # never break decode on a debug dump
+        logger.warning(f"DFLASH draft dump failed: {e}")
+    _dflash_dump_iter += 1
+
+
+def _profiler_span(name: str):
+    """Return a profiler ``record_function`` span when profiling is active.
+
+    DFLASH runs the draft and target (verify) models in the *same* process and
+    thread, so they cannot be separated by pid/tid in a Kineto trace. These
+    spans bracket the timeline so every op/kernel can be attributed to either
+    the draft or the verify phase. The span is a no-op (zero overhead) when no
+    profiler is running, so it is safe to leave in the decode hot path.
+    """
+    if torch.autograd._profiler_enabled():
+        return torch.profiler.record_function(name)
+    return contextlib.nullcontext()
 
 
 def _get_fused_kv_materialize_helper():
@@ -675,6 +738,7 @@ class DFlashWorker:
         draft_tokens = self._draft_block_tokens_buf[:bs]
         draft_tokens[:, 0].copy_(block_ids[:, 0])
         draft_tokens[:, 1:].copy_(draft_next)
+        _dump_draft_output(draft_hidden, draft_tokens)
         positions = positions_2d.reshape(-1)
 
         verify_input = DFlashVerifyInput(
@@ -1190,7 +1254,13 @@ class DFlashWorker:
                 "This usually means the request did not complete the prefill stage."
             )
 
-        self._prepare_for_speculative_decoding(batch, draft_input)
+        # --- Draft phase: drafts the candidate block with the draft model.
+        # This span covers ALL draft-side steps, not just the draft model
+        # forward: committed-token KV materialization, draft block setup / KV
+        # allocation, the draft forward itself, and head sampling all happen
+        # inside _prepare_for_speculative_decoding.
+        with _profiler_span("dflash_draft"):
+            self._prepare_for_speculative_decoding(batch, draft_input)
 
         model_worker_batch = batch.get_model_worker_batch()
         assert model_worker_batch.forward_mode.is_target_verify()
@@ -1204,9 +1274,11 @@ class DFlashWorker:
             batch.seq_lens.clone() if need_mamba_verify_commit else None
         )
 
-        batch_result = self.target_worker.forward_batch_generation(
-            model_worker_batch, is_verify=True, **kwargs
-        )
+        # --- Verify phase: the target model forward over the drafted block.
+        with _profiler_span("dflash_verify"):
+            batch_result = self.target_worker.forward_batch_generation(
+                model_worker_batch, is_verify=True, **kwargs
+            )
         logits_output, can_run_cuda_graph = (
             batch_result.logits_output,
             batch_result.can_run_cuda_graph,
@@ -1235,7 +1307,11 @@ class DFlashWorker:
         draft_input.bonus_tokens = new_bonus_tokens
         draft_input.target_hidden = next_target_hidden
         draft_input.ctx_lens = commit_lens
-        self._append_target_hidden_to_draft_kv(batch, draft_input)
+        # Write the committed verify tokens into the draft KV cache for the next
+        # iteration. This is draft-side work, so it shares the "dflash_draft"
+        # span name and aggregates with the drafting phase above.
+        with _profiler_span("dflash_draft"):
+            self._append_target_hidden_to_draft_kv(batch, draft_input)
         batch.spec_info = draft_input
         batch.forward_mode = ForwardMode.DECODE
 

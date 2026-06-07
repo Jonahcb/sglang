@@ -562,6 +562,175 @@ def set_global_graph_memory_pool(val):
     global_graph_memory_pool = val
 
 
+# --- env-gated graph-key dump (no-op unless DFLASH_GRAPHKEY_FILE is set) -------
+# Set DFLASH_GRAPHKEY_FILE=/path/to/file.jsonl to append one JSON line per cuda
+# graph replay recording which captured graph (graph_key) was launched, plus the
+# batch sizes, which worker (draft vs target), and the forward mode. Purely
+# additive: when the env var is unset, _dump_graph_key returns immediately.
+_GRAPHKEY_DUMP_PATH = os.environ.get("DFLASH_GRAPHKEY_FILE", "").strip()
+
+
+def _dump_graph_key(runner, graph_key, forward_batch):
+    if not _GRAPHKEY_DUMP_PATH:
+        return
+    try:
+        import json as _json
+
+        mr = runner.model_runner
+        try:
+            capturing = bool(torch.cuda.is_current_stream_capturing())
+        except Exception:
+            capturing = False
+        rec = {
+            "graph_key": graph_key,
+            "bs": getattr(runner, "bs", None),
+            "raw_bs": getattr(runner, "raw_bs", None),
+            "raw_num_token": getattr(runner, "raw_num_token", None),
+            "is_draft_worker": bool(getattr(mr, "is_draft_worker", False)),
+            "forward_mode": forward_batch.forward_mode.name,
+            "capturing": capturing,
+        }
+        with open(_GRAPHKEY_DUMP_PATH, "a") as f:
+            f.write(_json.dumps(rec) + "\n")
+    except Exception:
+        # Instrumentation must never break the forward pass.
+        pass
+
+
+# --- env-gated graph DOT dump (no-op unless DFLASH_GRAPHDOT_DIR is set) ---------
+# Set DFLASH_GRAPHDOT_DIR=/path/to/dir to dump, once per captured graph, a
+# Graphviz .dot file listing EVERY node in that CUDA graph — kernel launches
+# (with mangled kernel names), memcpys/memsets, and the dependency edges between
+# them. This is the full "what kernels are baked into this graph" view.
+#
+# Mechanics (torch 2.9): debug_dump() only emits if the underlying cudaGraph_t
+# template is still alive. By default CUDAGraph(keep_graph=False) destroys that
+# template at capture_end (instantiating the exec immediately), so debug_dump
+# finds nothing and silently writes no file -- this is NOT a ROCm bug.
+# _create_graph_for_dump() therefore builds CUDAGraph(keep_graph=True) +
+# enable_debug_mode() so the template survives. With keep_graph=True the exec is
+# NOT instantiated at capture_end, and debug_dump() destroys the template after
+# writing it; so _dump_graph_dot() must call instantiate() FIRST, otherwise the
+# subsequent replay would have neither a template nor an exec. Purely additive:
+# unset env var -> default CUDAGraph() and both hooks return immediately.
+_GRAPHDOT_DUMP_DIR = os.environ.get("DFLASH_GRAPHDOT_DIR", "").strip()
+
+# --- env-gated per-replay timing log (no-op unless DFLASH_REPLAY_LOG is set) ----
+# Set DFLASH_REPLAY_LOG=/path/to/file.jsonl to append, per CUDA graph replay
+# (hipGraphLaunch), one JSON line with: a monotonic seq, the graph_key, draft vs
+# target, forward mode, the number of kernels baked into that graph (from the DOT
+# census, populated when DFLASH_GRAPHDOT_DIR is also set), the MEASURED GPU
+# execution time of the launch (CUDA events + sync -> ground truth that the
+# kernels actually ran), and a perf_counter wall timestamp (iteration timing).
+# The per-replay GPU sync serializes the pipeline, so use this for diagnosis,
+# NOT for throughput measurement.
+_REPLAY_LOG_PATH = os.environ.get("DFLASH_REPLAY_LOG", "").strip()
+
+# (is_draft_worker, graph_key) -> kernel node count, filled at capture from DOTs.
+_GRAPH_KERNEL_COUNTS = {}
+
+
+def _create_graph_for_dump():
+    """Return a CUDAGraph configured so debug_dump() can emit a DOT, or None.
+
+    None means dumping is disabled -> caller should build the default graph.
+    """
+    if not _GRAPHDOT_DUMP_DIR:
+        return None
+    try:
+        graph = torch.cuda.CUDAGraph(keep_graph=True)
+        graph.enable_debug_mode()
+        return graph
+    except Exception:
+        return None
+
+
+def _dump_graph_dot(runner, key, graph):
+    if not _GRAPHDOT_DUMP_DIR:
+        return
+    try:
+        os.makedirs(_GRAPHDOT_DUMP_DIR, exist_ok=True)
+        worker = (
+            "draft"
+            if bool(getattr(runner.model_runner, "is_draft_worker", False))
+            else "target"
+        )
+        path = os.path.join(_GRAPHDOT_DUMP_DIR, f"{worker}_graph_{key}.dot")
+        # keep_graph=True defers exec instantiation to first replay; instantiate
+        # now so debug_dump (which destroys the template) doesn't strand replay.
+        try:
+            graph.instantiate()
+        except Exception:
+            pass
+        # debug_dump writes a Graphviz DOT file describing the whole graph.
+        graph.debug_dump(path)
+        # Cache the kernel-node count so the replay log can report how many
+        # kernels each hipGraphLaunch of this key sends to the GPU.
+        try:
+            with open(path) as _f:
+                _GRAPH_KERNEL_COUNTS[(worker == "draft", key)] = sum(
+                    1 for ln in _f if ln.strip() == "KERNEL"
+                )
+        except Exception:
+            pass
+    except Exception:
+        # Instrumentation must never break capture.
+        pass
+
+
+def _replay_and_log(runner, graph_key, forward_batch):
+    """Replay the graph; if DFLASH_REPLAY_LOG is set, time it and log one line.
+
+    The replay happens EXACTLY once whether or not logging is enabled.
+    """
+    graph = runner.graphs[graph_key]
+    if not _REPLAY_LOG_PATH:
+        graph.replay()
+        return
+
+    start = end = None
+    try:
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+    except Exception:
+        start = end = None
+
+    graph.replay()  # the one and only launch
+
+    gpu_ms = None
+    if start is not None:
+        try:
+            end.record()
+            end.synchronize()  # wait for the launch to finish -> real GPU time
+            gpu_ms = start.elapsed_time(end)
+        except Exception:
+            gpu_ms = None
+
+    try:
+        import json as _json
+        import time as _time
+
+        seq = getattr(runner, "_replay_seq", 0) + 1
+        runner._replay_seq = seq
+        is_draft = bool(getattr(runner.model_runner, "is_draft_worker", False))
+        rec = {
+            "seq": seq,
+            "graph_key": graph_key,
+            "is_draft_worker": is_draft,
+            "forward_mode": forward_batch.forward_mode.name,
+            "raw_bs": getattr(runner, "raw_bs", None),
+            "raw_num_token": getattr(runner, "raw_num_token", None),
+            "kernels_in_graph": _GRAPH_KERNEL_COUNTS.get((is_draft, graph_key)),
+            "gpu_ms": gpu_ms,
+            "wall_t": _time.perf_counter(),
+        }
+        with open(_REPLAY_LOG_PATH, "a") as f:
+            f.write(_json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
 def _default_make_graph_key(bs, stream_idx=None, variant_label=None):
     """Build a graph dict key from batch size, stream index, and lora variant.
 
@@ -907,6 +1076,7 @@ class CudaGraphRunner:
                         key = _default_make_graph_key(bs, stream_idx, variant_label)
                         self.graphs[key] = graph
                         self.output_buffers[key] = output_buffers
+                        _dump_graph_dot(self, key, graph)
 
         # Trigger CUDA graph capture for specific shapes.
         # Capture the large shapes first so that the smaller shapes
@@ -969,6 +1139,11 @@ class CudaGraphRunner:
             if _is_hip:
                 raise RuntimeError("Breakable CUDA graph is not supported on ROCm/HIP")
             return BreakableCUDAGraph()
+        # When DOT dumping is enabled, build a keep_graph=True graph so the
+        # template survives capture_end for debug_dump (see _dump_graph_dot).
+        dump_graph = _create_graph_for_dump()
+        if dump_graph is not None:
+            return dump_graph
         return torch.cuda.CUDAGraph()
 
     def capture_one_batch_size(
@@ -1350,8 +1525,9 @@ class CudaGraphRunner:
             if self.model_runner.device_timer
             else contextlib.nullcontext()
         )
+        _dump_graph_key(self, graph_key, forward_batch)
         with ctx:
-            self.graphs[graph_key].replay()
+            _replay_and_log(self, graph_key, forward_batch)
 
         output = self.output_buffers[graph_key]
 

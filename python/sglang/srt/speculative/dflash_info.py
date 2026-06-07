@@ -424,6 +424,11 @@ class DFlashVerifyInput(SpecInput):
             num_correct_drafts_per_req_cpu.append(max(0, appended - 1))
             req.spec_verify_ct += 1
             req.spec_num_correct_drafts += num_correct_drafts_per_req_cpu[-1]
+            # Per-decode-step acceptance histogram (mirrors the EAGLE verify path
+            # in scheduler_output_processor_mixin.py); lets meta_info expose
+            # spec_correct_drafts_histogram so per-iteration accept length is
+            # recoverable. Pure metric, no effect on generation.
+            req.update_spec_correct_drafts_histogram(num_correct_drafts_per_req_cpu[-1])
 
         commit_lens = torch.tensor(commit_lens_cpu, dtype=torch.int32, device=device)
         new_bonus_tokens = torch.tensor(

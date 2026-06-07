@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
 from typing import Iterable, Optional, Tuple
 
 import torch
@@ -34,9 +37,147 @@ from sglang.srt.speculative.dflash_utils import (
 logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+# DFlash forward-pass debugging (env-gated, additive, no-op when disabled).
+#
+# Set DFLASH_DEBUG_FILE=/path/to/dump.jsonl to capture per-layer activation and
+# (one-time) weight statistics for the draft model forward pass. One JSON object
+# is written per line; nothing is ever printed to the terminal.
+#
+# Debugging is skipped entirely (a) when the env var is unset and (b) while a
+# CUDA/HIP graph is being captured -- the stats below do host<->device syncs
+# (.item()/float()) which would corrupt graph capture. In CUDA-graph mode the
+# Python forward only runs at capture time, so this means graph runs log nothing;
+# eager runs (disable_cuda_graph=True) log everything, which is exactly the
+# configuration used to debug the all-zeros hidden states.
+# --------------------------------------------------------------------------- #
+_DFLASH_DBG_LOCK = threading.Lock()
+_DFLASH_FWD_COUNTER = 0
+_DFLASH_CUR_FWD_ID = -1
+_DFLASH_WEIGHTS_DUMPED = False
+
+
+def _dflash_dbg_path() -> str:
+    return os.environ.get("DFLASH_DEBUG_FILE", "").strip()
+
+
+def _dflash_is_capturing() -> bool:
+    try:
+        return bool(torch.cuda.is_current_stream_capturing())
+    except Exception:
+        return False
+
+
+def _dflash_dbg_active() -> bool:
+    return bool(_dflash_dbg_path()) and not _dflash_is_capturing()
+
+
+def _dflash_tensor_stats(t: Optional[torch.Tensor]) -> dict:
+    """Summarize a tensor without dumping its full contents."""
+    if t is None:
+        return {"none": True}
+    try:
+        td = t.detach()
+        numel = int(td.numel())
+        out = {"shape": list(td.shape), "dtype": str(td.dtype), "numel": numel}
+        if numel == 0:
+            return out
+        # Cast to float32 so fp8/bf16/half all summarize cleanly.
+        f = td.float()
+        out.update(
+            {
+                "mean": float(f.mean()),
+                "std": float(f.std()) if numel > 1 else 0.0,
+                "min": float(f.min()),
+                "max": float(f.max()),
+                "absmax": float(f.abs().max()),
+                "nan": int(torch.isnan(f).sum()),
+                "inf": int(torch.isinf(f).sum()),
+                "zero_frac": float((f == 0).float().mean()),
+            }
+        )
+        return out
+    except Exception as e:  # never let debugging break the forward pass
+        return {"error": repr(e)}
+
+
+def _dflash_dbg_write(record: dict) -> None:
+    path = _dflash_dbg_path()
+    if not path:
+        return
+    try:
+        line = json.dumps(record)
+        with _DFLASH_DBG_LOCK:
+            with open(path, "a") as fh:
+                fh.write(line + "\n")
+    except Exception as e:
+        logger.warning("DFLASH debug write failed: %s", e)
+
+
+def _dflash_dbg_tensor(tag: str, t: Optional[torch.Tensor]) -> None:
+    if not _dflash_dbg_active():
+        return
+    _dflash_dbg_write(
+        {
+            "fwd": _DFLASH_CUR_FWD_ID,
+            "kind": "act",
+            "tag": tag,
+            **_dflash_tensor_stats(t),
+        }
+    )
+
+
+def _dflash_dbg_weight(tag: str, module: nn.Module) -> None:
+    """Dump statistics for the parameters/buffers that matter for a linear/norm."""
+    if not _dflash_dbg_active():
+        return
+    seen: set = set()
+    for attr in (
+        "weight",
+        "weight_scale",
+        "weight_scale_inv",
+        "input_scale",
+        "bias",
+    ):
+        val = getattr(module, attr, None)
+        if val is None:
+            continue
+        seen.add(attr)
+        _dflash_dbg_write(
+            {
+                "fwd": _DFLASH_CUR_FWD_ID,
+                "kind": "weight",
+                "tag": f"{tag}.{attr}",
+                **_dflash_tensor_stats(val),
+            }
+        )
+    # Sweep ALL named params/buffers for anything scale-related (e.g. an
+    # unbound `weight_quantizer.scale` from an unfinalized checkpoint, or a
+    # `weight_scale` left at its default because the loader never filled it).
+    for name, val in list(module.named_parameters(recurse=True)) + list(
+        module.named_buffers(recurse=True)
+    ):
+        if val is None:
+            continue
+        if "scale" not in name.lower():
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        _dflash_dbg_write(
+            {
+                "fwd": _DFLASH_CUR_FWD_ID,
+                "kind": "weight",
+                "tag": f"{tag}.{name}",
+                **_dflash_tensor_stats(val),
+            }
+        )
+
+
 class DFlashAttention(nn.Module):
-    def __init__(self, config, layer_id: int) -> None:
+    def __init__(self, config, layer_id: int, quant_config=None, prefix: str = "") -> None:
         super().__init__()
+        self.layer_id = int(layer_id)
         hidden_size = int(config.hidden_size)
         tp_size = int(get_tensor_model_parallel_world_size())
         total_num_heads = int(config.num_attention_heads)
@@ -77,13 +218,15 @@ class DFlashAttention(nn.Module):
             total_num_heads=self.total_num_heads,
             total_num_kv_heads=self.total_num_kv_heads,
             bias=attention_bias,
-            prefix="qkv_proj",
+            quant_config=quant_config,
+            prefix=f"{prefix}.qkv_proj" if prefix else "qkv_proj",
         )
         self.o_proj = RowParallelLinear(
             self.total_num_heads * head_dim,
             hidden_size,
             bias=attention_bias,
-            prefix="o_proj",
+            quant_config=quant_config,
+            prefix=f"{prefix}.o_proj" if prefix else "o_proj",
         )
 
         # Per-head Q/K RMSNorm, matching HF Qwen3.
@@ -124,12 +267,21 @@ class DFlashAttention(nn.Module):
         hidden_states: torch.Tensor,
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
+        lid = self.layer_id
         qkv, _ = self.qkv_proj(hidden_states)
+        _dflash_dbg_tensor(f"layer{lid}.attn.qkv_proj_out", qkv)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = apply_qk_norm(q, k, self.q_norm, self.k_norm, self.head_dim)
+        _dflash_dbg_tensor(f"layer{lid}.attn.q_after_norm", q)
+        _dflash_dbg_tensor(f"layer{lid}.attn.k_after_norm", k)
+        _dflash_dbg_tensor(f"layer{lid}.attn.v", v)
         q, k = self.rotary_emb(positions, q, k)
+        _dflash_dbg_tensor(f"layer{lid}.attn.q_after_rope", q)
+        _dflash_dbg_tensor(f"layer{lid}.attn.k_after_rope", k)
         attn_output = self.attn(q, k, v, forward_batch)
+        _dflash_dbg_tensor(f"layer{lid}.attn.attn_core_out", attn_output)
         output, _ = self.o_proj(attn_output)
+        _dflash_dbg_tensor(f"layer{lid}.attn.o_proj_out", output)
         return output
 
     def kv_proj_only(
@@ -201,22 +353,39 @@ class DFlashMLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        lid = getattr(self, "layer_id", -1)
+        _dflash_dbg_tensor(f"layer{lid}.mlp.in", x)
         gate_up, _ = self.gate_up_proj(x)
+        _dflash_dbg_tensor(f"layer{lid}.mlp.gate_up_proj_out", gate_up)
         x = self.act_fn(gate_up)
+        _dflash_dbg_tensor(f"layer{lid}.mlp.act_out", x)
         x, _ = self.down_proj(x)
+        _dflash_dbg_tensor(f"layer{lid}.mlp.down_proj_out", x)
         return x
 
 
 class DFlashDecoderLayer(nn.Module):
-    def __init__(self, config, layer_id: int) -> None:
+    def __init__(self, config, layer_id: int, quant_config=None, prefix: str = "") -> None:
         super().__init__()
+        self.layer_id = int(layer_id)
         hidden_size = int(config.hidden_size)
         rms_norm_eps = float(getattr(config, "rms_norm_eps", 1e-6))
 
         self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.self_attn = DFlashAttention(config=config, layer_id=layer_id)
+        self.self_attn = DFlashAttention(
+            config=config,
+            layer_id=layer_id,
+            quant_config=quant_config,
+            prefix=f"{prefix}.self_attn" if prefix else "self_attn",
+        )
         self.post_attention_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.mlp = DFlashMLP(config=config)
+        self.mlp = DFlashMLP(
+            config=config,
+            quant_config=quant_config,
+            prefix=f"{prefix}.mlp" if prefix else "mlp",
+        )
+        # Let the MLP tag its debug records with the owning layer id.
+        self.mlp.layer_id = int(layer_id)
 
     def forward(
         self,
@@ -225,10 +394,12 @@ class DFlashDecoderLayer(nn.Module):
         forward_batch: ForwardBatch,
         residual: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        lid = self.layer_id
         if hidden_states.numel() == 0:
             # Keep return types consistent for upstream callers.
             if residual is None:
                 residual = hidden_states
+            _dflash_dbg_tensor(f"layer{lid}.EMPTY_INPUT", hidden_states)
             return hidden_states, residual
 
         # Pre-norm attention with fused residual+norm when possible (Qwen3-style).
@@ -237,14 +408,20 @@ class DFlashDecoderLayer(nn.Module):
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
+        _dflash_dbg_tensor(f"layer{lid}.after_input_layernorm", hidden_states)
+        _dflash_dbg_tensor(f"layer{lid}.residual_after_input_layernorm", residual)
 
         attn_out = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
             forward_batch=forward_batch,
         )
+        _dflash_dbg_tensor(f"layer{lid}.self_attn_out", attn_out)
         hidden_states, residual = self.post_attention_layernorm(attn_out, residual)
+        _dflash_dbg_tensor(f"layer{lid}.after_post_attention_layernorm", hidden_states)
+        _dflash_dbg_tensor(f"layer{lid}.residual_after_post_attn_ln", residual)
         hidden_states = self.mlp(hidden_states)
+        _dflash_dbg_tensor(f"layer{lid}.mlp_out", hidden_states)
         return hidden_states, residual
 
 
@@ -266,7 +443,15 @@ class DFlashDraftModel(nn.Module):
         rms_norm_eps = float(getattr(config, "rms_norm_eps", 1e-6))
 
         self.layers = nn.ModuleList(
-            [DFlashDecoderLayer(config=config, layer_id=i) for i in range(num_layers)]
+            [
+                DFlashDecoderLayer(
+                    config=config,
+                    layer_id=i,
+                    quant_config=quant_config,
+                    prefix=f"layers.{i}",
+                )
+                for i in range(num_layers)
+            ]
         )
         self.norm = RMSNorm(hidden_size, eps=rms_norm_eps)
 
@@ -306,6 +491,29 @@ class DFlashDraftModel(nn.Module):
             )
         return self.hidden_norm(self.fc(target_hidden))
 
+    def _dflash_dump_weights(self) -> None:
+        """One-time dump of every parameter that feeds the draft forward pass."""
+        try:
+            _dflash_dbg_weight("fc", self.fc)
+            _dflash_dbg_weight("hidden_norm", self.hidden_norm)
+            _dflash_dbg_weight("norm", self.norm)
+            for i, layer in enumerate(self.layers):
+                _dflash_dbg_weight(f"layer{i}.input_layernorm", layer.input_layernorm)
+                _dflash_dbg_weight(
+                    f"layer{i}.post_attention_layernorm",
+                    layer.post_attention_layernorm,
+                )
+                _dflash_dbg_weight(
+                    f"layer{i}.self_attn.qkv_proj", layer.self_attn.qkv_proj
+                )
+                _dflash_dbg_weight(f"layer{i}.self_attn.o_proj", layer.self_attn.o_proj)
+                _dflash_dbg_weight(f"layer{i}.self_attn.q_norm", layer.self_attn.q_norm)
+                _dflash_dbg_weight(f"layer{i}.self_attn.k_norm", layer.self_attn.k_norm)
+                _dflash_dbg_weight(f"layer{i}.mlp.gate_up_proj", layer.mlp.gate_up_proj)
+                _dflash_dbg_weight(f"layer{i}.mlp.down_proj", layer.mlp.down_proj)
+        except Exception as e:
+            logger.warning("DFLASH weight dump failed: %s", e)
+
     @torch.no_grad()
     def forward(
         self,
@@ -316,23 +524,43 @@ class DFlashDraftModel(nn.Module):
         get_embedding: bool = False,
         pp_proxy_tensors=None,
     ) -> LogitsProcessorOutput:
+        global _DFLASH_FWD_COUNTER, _DFLASH_CUR_FWD_ID, _DFLASH_WEIGHTS_DUMPED
+        if _dflash_dbg_path():
+            _DFLASH_CUR_FWD_ID = _DFLASH_FWD_COUNTER
+            _DFLASH_FWD_COUNTER += 1
+
         if input_embeds is None:
             raise ValueError(
                 "DFlashDraftModel requires `input_embeds` (use the target embedding)."
             )
+
+        # Dump static weights once, on the first eager forward we actually log.
+        if _dflash_dbg_active() and not _DFLASH_WEIGHTS_DUMPED:
+            self._dflash_dump_weights()
+            _DFLASH_WEIGHTS_DUMPED = True
+
         hidden_states = input_embeds
+        _dflash_dbg_tensor("forward.input_embeds", hidden_states)
+        if input_ids is not None:
+            _dflash_dbg_tensor("forward.input_ids", input_ids)
+        _dflash_dbg_tensor("forward.positions", positions)
         residual: Optional[torch.Tensor] = None
 
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
+            _dflash_dbg_tensor(f"layer{i}.IN.hidden", hidden_states)
+            _dflash_dbg_tensor(f"layer{i}.IN.residual", residual)
             hidden_states, residual = layer(
                 positions, hidden_states, forward_batch, residual
             )
+            _dflash_dbg_tensor(f"layer{i}.OUT.hidden", hidden_states)
+            _dflash_dbg_tensor(f"layer{i}.OUT.residual", residual)
 
         if hidden_states.numel() != 0:
             if residual is None:
                 hidden_states = self.norm(hidden_states)
             else:
                 hidden_states, _ = self.norm(hidden_states, residual)
+        _dflash_dbg_tensor("forward.final_norm_out", hidden_states)
 
         return LogitsProcessorOutput(
             next_token_logits=None,
