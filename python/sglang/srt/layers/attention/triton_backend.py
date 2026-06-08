@@ -971,6 +971,7 @@ class TritonAttnBackend(AttentionBackend):
         forward_batch: ForwardBatch,
         save_kv_cache=True,
         sinks=None,
+        return_mxfp4=False,
     ):
         # TODO: reuse the buffer across layers
         if layer.qk_head_dim != layer.v_head_dim:
@@ -1059,6 +1060,16 @@ class TritonAttnBackend(AttentionBackend):
             k_descale = 1.0
             v_descale = 1.0
 
+        # Optional fused MXFP4 output: the kernel writes packed E2M1 + E8M0 scales
+        # directly (bit-exact vs a standalone dynamic_mxfp4_quant), so a downstream
+        # afp4wfp4 GEMM (the DFlash draft o_proj) consumes them without a bf16 roundtrip.
+        o_fp4 = o_scale = None
+        if return_mxfp4:
+            n = layer.tp_q_head_num * layer.v_head_dim
+            m = o.shape[0]
+            o_fp4 = torch.empty((m, n // 2), dtype=torch.uint8, device=o.device)
+            o_scale = torch.empty((n // 32, m), dtype=torch.uint8, device=o.device).T
+
         self.extend_attention_fwd(
             q.view(-1, layer.tp_q_head_num, layer.qk_head_dim),
             k.contiguous(),
@@ -1081,7 +1092,11 @@ class TritonAttnBackend(AttentionBackend):
             sinks=sinks,
             window_kv_offsets=window_kv_offsets,
             xai_temperature_len=layer.xai_temperature_len,
+            o_fp4=o_fp4,
+            o_scale=o_scale,
         )
+        if return_mxfp4:
+            return (o_fp4, o_scale)
         return o
 
     def _forward_extend_unified(

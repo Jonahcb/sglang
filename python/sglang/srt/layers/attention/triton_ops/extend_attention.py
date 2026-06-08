@@ -31,6 +31,17 @@ if _is_cuda:
 
 _is_hip = is_hip()
 
+# Optional MXFP4 output epilogue. Reuses aiter's exact device-level quant op so the
+# fused (fp4, e8m0-scale) output is bit-identical to a standalone dynamic_mxfp4_quant,
+# letting a downstream afp4wfp4 GEMM (e.g. the DFlash draft o_proj) consume it directly.
+try:
+    from aiter.ops.triton.quant.quant import _mxfp4_quant_op as _aiter_mxfp4_quant_op
+
+    _HAS_AITER_MXFP4 = True
+except Exception:
+    _aiter_mxfp4_quant_op = None
+    _HAS_AITER_MXFP4 = False
+
 
 def _get_block_sizes_for_extend_attention(Lq: int, Lv: int):
     """
@@ -257,6 +268,11 @@ def _fwd_kernel(
     stride_buf_kh,
     stride_buf_vbs,
     stride_buf_vh,
+    O_fp4,
+    O_scale,
+    stride_ofp4_bs,
+    stride_oscale_bs,
+    stride_oscale_blk,
     SLIDING_WINDOW_SIZE: tl.constexpr,
     logit_cap: tl.constexpr,
     xai_temperature_len: tl.constexpr,
@@ -272,6 +288,7 @@ def _fwd_kernel(
     SKIP_PREFIX_CUSTOM_MASK: tl.constexpr,
     STORE_TRANSPOSE: tl.constexpr,
     HAS_SINK: tl.constexpr,
+    OUT_FP4: tl.constexpr,
 ):
     cur_seq = tl.program_id(0)
     cur_head = tl.program_id(1)
@@ -538,24 +555,42 @@ def _fwd_kernel(
         cur_sink = tl.load(sink_ptr + cur_head)
         deno += tl.exp(cur_sink - e_max)
 
-    offs_o = (
-        (cur_seq_extend_start_idx + cur_block_m * BLOCK_M + offs_m[:, None])
-        * stride_obs
-        + cur_head * stride_oh
-        + offs_dv[None, :]
-    )
-    if STORE_TRANSPOSE:
-        tl.store(
-            O_Extend + offs_o.T,
-            (acc / deno[:, None]).T,
-            mask=(mask_m[:, None] & mask_dv[None, :]).T,
+    if OUT_FP4:
+        # Fused MXFP4 output epilogue: quantize this head's [BLOCK_M, BLOCK_DV]
+        # output to E2M1 + E8M0 block scales (32-elem blocks) and scatter into the
+        # flattened [num_tokens, num_heads * head_dim] o_proj-input tensors. Requires
+        # BLOCK_DV == Lv and Lv % 32 == 0 (enforced by the wrapper), so each head's
+        # columns are exactly BLOCK_DV/32 self-contained quant blocks.
+        o = acc / deno[:, None]
+        o_fp4, o_bs = _aiter_mxfp4_quant_op(o, BLOCK_DV, BLOCK_M, 32)
+        offs_tok = cur_seq_extend_start_idx + cur_block_m * BLOCK_M + offs_m
+        offs_fp4 = offs_tok[:, None] * stride_ofp4_bs + (
+            cur_head * (BLOCK_DV // 2) + tl.arange(0, BLOCK_DV // 2)[None, :]
         )
+        tl.store(O_fp4 + offs_fp4, o_fp4, mask=mask_m[:, None])
+        offs_scale = offs_tok[:, None] * stride_oscale_bs + (
+            cur_head * (BLOCK_DV // 32) + tl.arange(0, BLOCK_DV // 32)[None, :]
+        ) * stride_oscale_blk
+        tl.store(O_scale + offs_scale, o_bs, mask=mask_m[:, None])
     else:
-        tl.store(
-            O_Extend + offs_o,
-            acc / deno[:, None],
-            mask=mask_m[:, None] & mask_dv[None, :],
+        offs_o = (
+            (cur_seq_extend_start_idx + cur_block_m * BLOCK_M + offs_m[:, None])
+            * stride_obs
+            + cur_head * stride_oh
+            + offs_dv[None, :]
         )
+        if STORE_TRANSPOSE:
+            tl.store(
+                O_Extend + offs_o.T,
+                (acc / deno[:, None]).T,
+                mask=(mask_m[:, None] & mask_dv[None, :]).T,
+            )
+        else:
+            tl.store(
+                O_Extend + offs_o,
+                acc / deno[:, None],
+                mask=mask_m[:, None] & mask_dv[None, :],
+            )
 
 
 def extend_attention_fwd(
@@ -581,11 +616,19 @@ def extend_attention_fwd(
     sinks=None,
     window_kv_offsets=None,
     xai_temperature_len=-1,
+    o_fp4=None,
+    o_scale=None,
 ):
     """
     q_extend, k_extend, v_extend, o_extend: contiguous tensors
 
     k_buffer, v_buffer: (prefix + extend) tensors in mem_manager
+
+    o_fp4, o_scale: optional MXFP4 output buffers. When both are provided, the kernel
+    writes the attention output as packed E2M1 (o_fp4) + E8M0 block scales (o_scale),
+    bit-identical to dynamic_mxfp4_quant(o_extend), and o_extend is left untouched.
+    Layouts must match dynamic_mxfp4_quant: o_fp4 is (num_tokens, head_num*Lv//2) uint8;
+    o_scale is (head_num*Lv//32, num_tokens) uint8 viewed transposed to (num_tokens, ...).
     """
     Lq, Lk, Lv = (
         q_extend.shape[-1],
@@ -607,6 +650,16 @@ def extend_attention_fwd(
     SKIP_PREFIX_CUSTOM_MASK = skip_prefix_custom_mask
 
     HAS_SINK = sinks is not None
+
+    OUT_FP4 = o_fp4 is not None
+    if OUT_FP4:
+        assert _HAS_AITER_MXFP4, "MXFP4 output epilogue requires aiter's _mxfp4_quant_op"
+        assert o_scale is not None, "o_fp4 requires o_scale"
+        # Each head's Lv columns must be a whole number of 32-elem MXFP4 blocks with
+        # no power-of-2 padding, so per-head quant blocks never cross a head boundary.
+        assert (
+            BLOCK_DV == Lv and Lv % 32 == 0
+        ), f"MXFP4 output epilogue needs Lv % 32 == 0 and no padding (Lv={Lv}, BLOCK_DV={BLOCK_DV})"
 
     grid = (batch_size, head_num, triton.cdiv(max_len_extend, BLOCK_M))
     num_stages = 1
@@ -645,6 +698,11 @@ def extend_attention_fwd(
         k_buffer.stride(1),
         v_buffer.stride(0),
         v_buffer.stride(1),
+        o_fp4,
+        o_scale,
+        o_fp4.stride(0) if OUT_FP4 else 0,
+        o_scale.stride(0) if OUT_FP4 else 0,
+        o_scale.stride(1) if OUT_FP4 else 0,
         SLIDING_WINDOW_SIZE=sliding_window_size,
         logit_cap=logit_cap,
         xai_temperature_len=xai_temperature_len,
@@ -660,6 +718,7 @@ def extend_attention_fwd(
         SKIP_PREFIX_CUSTOM_MASK=SKIP_PREFIX_CUSTOM_MASK,
         HAS_SINK=HAS_SINK,
         STORE_TRANSPOSE=_is_hip,
+        OUT_FP4=OUT_FP4,
         num_warps=num_warps,
         num_stages=num_stages,
         **extra_kargs,

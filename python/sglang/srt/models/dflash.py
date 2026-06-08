@@ -30,11 +30,36 @@ from sglang.srt.speculative.dflash_utils import (
     can_dflash_slice_qkv_weight,
     parse_dflash_draft_config,
 )
-from sglang.srt.utils import is_npu
+from sglang.srt.utils import get_bool_env_var, is_gfx95_supported, is_hip, is_npu
 
 _is_npu = is_npu()
 if _is_npu:
     from sgl_kernel_npu.norm.split_qkv_rmsnorm_rope import split_qkv_rmsnorm_rope
+
+# On ROCm gfx95 + aiter, the MXFP4 draft can fuse the activation->fp4 quantization
+# into the producing kernel (RMSNorm for qkv/gate_up, SiLU+mul for down), so each
+# quantized Linear receives a pre-quantized (fp4, scale) tuple and skips its
+# standalone dynamic_mxfp4_quant launch. Mirrors the DeepSeek path in
+# layers/communicator.py. Falls back to the plain norm/activation otherwise.
+_use_aiter = get_bool_env_var("SGLANG_USE_AITER") and is_hip()
+_is_gfx95_supported = is_gfx95_supported()
+_mxfp4_fusion_available = _use_aiter and _is_gfx95_supported and not _is_npu
+if _mxfp4_fusion_available:
+    from aiter.ops.triton.activation import act_mul_and_mxfp4_quant
+
+    from sglang.srt.layers.quantization.rocm_mxfp4_utils import fused_rms_mxfp4_quant
+
+
+def _linear_is_mxfp4(linear: nn.Module) -> bool:
+    """True iff this quantized Linear holds MXFP4 (packed uint8) weights."""
+    weight = getattr(linear, "weight", None)
+    return (
+        _mxfp4_fusion_available
+        and weight is not None
+        and weight.dtype == torch.uint8
+    )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,6 +148,18 @@ class DFlashAttention(nn.Module):
             layer_id=layer_id,
             attn_type=AttentionType.ENCODER_ONLY,
         )
+        self._mxfp4_oproj_fused = None
+
+    def _fuse_oproj_quant(self) -> bool:
+        # Fuse the o_proj activation->MXFP4 quant into the attention output epilogue
+        # when o_proj holds MXFP4 weights. _linear_is_mxfp4 already implies gfx95+aiter,
+        # where the draft attention is always the triton extend kernel (the only backend
+        # that implements the fused fp4 epilogue). Cached after weights are loaded.
+        if self._mxfp4_oproj_fused is None:
+            self._mxfp4_oproj_fused = get_bool_env_var(
+                "SGLANG_DFLASH_FUSE_OPROJ", "true"
+            ) and _linear_is_mxfp4(self.o_proj)
+        return self._mxfp4_oproj_fused
 
     def forward_prepare_npu(self, positions, hidden_states):
         qkv, _ = self.qkv_proj(hidden_states)
@@ -157,7 +194,16 @@ class DFlashAttention(nn.Module):
             q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
             q, k = apply_qk_norm(q, k, self.q_norm, self.k_norm, self.head_dim)
             q, k = self.rotary_emb(positions, q, k)
-        attn_output = self.attn(q, k, v, forward_batch)
+        # When o_proj is MXFP4, fuse its activation->fp4 quant into the attention
+        # output epilogue (triton extend kernel writes packed fp4 + e8m0 scales),
+        # so o_proj consumes the (fp4, scale) tuple directly and skips its standalone
+        # dynamic_mxfp4_quant -- avoiding the bf16 attention-output HBM roundtrip.
+        # This is the producer-side fusion the other Linears already get; o_proj's
+        # producer is the attention kernel rather than a GEMM, hence the epilogue.
+        if self._fuse_oproj_quant():
+            attn_output = self.attn(q, k, v, forward_batch, return_mxfp4=True)
+        else:
+            attn_output = self.attn(q, k, v, forward_batch)
         output, _ = self.o_proj(attn_output)
         return output
 
@@ -228,10 +274,23 @@ class DFlashMLP(nn.Module):
                 f"Unsupported DFlash activation: {hidden_act}. Only silu is supported for now."
             )
         self.act_fn = SiluAndMul()
+        self._mxfp4_fused = None
+
+    def _fuse_act_quant(self) -> bool:
+        if self._mxfp4_fused is None:
+            self._mxfp4_fused = _linear_is_mxfp4(self.down_proj)
+        return self._mxfp4_fused
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x may be a pre-quantized (fp4, scale) tuple when the producing
+        # post_attention_layernorm was fused; gate_up_proj accepts either form.
         gate_up, _ = self.gate_up_proj(x)
-        x = self.act_fn(gate_up)
+        if self._fuse_act_quant():
+            # Fused SiLU + mul + MXFP4 quant -> (fp4, scale) tuple for down_proj,
+            # eliminating the standalone dynamic_mxfp4_quant before down_proj.
+            x = act_mul_and_mxfp4_quant(gate_up, "silu")
+        else:
+            x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
         return x
 
@@ -253,6 +312,15 @@ class DFlashDecoderLayer(nn.Module):
             config=config,
             quant_config=quant_config,
         )
+        self._mxfp4_fused = None
+
+    def _fuse_norm_quant(self) -> bool:
+        # Gate on the qkv_proj weights (the consumer of the input_layernorm
+        # output); the post_attention_layernorm -> gate_up_proj path is uniformly
+        # quantized in the same checkpoint. Cached after weights are loaded.
+        if self._mxfp4_fused is None:
+            self._mxfp4_fused = _linear_is_mxfp4(self.self_attn.qkv_proj)
+        return self._mxfp4_fused
 
     def forward(
         self,
@@ -267,19 +335,58 @@ class DFlashDecoderLayer(nn.Module):
                 residual = hidden_states
             return hidden_states, residual
 
+        fused = self._fuse_norm_quant()
+
         # Pre-norm attention with fused residual+norm when possible (Qwen3-style).
+        # When fused, (residual-add +) RMSNorm + MXFP4 quant happen in one kernel
+        # and hidden_states becomes a pre-quantized (fp4, scale) tuple that
+        # qkv_proj consumes directly, skipping its standalone quant.
         if residual is None:
             residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
+            if fused:
+                hidden_states, *_, _ = fused_rms_mxfp4_quant(
+                    hidden_states,
+                    self.input_layernorm.weight,
+                    self.input_layernorm.variance_epsilon,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            else:
+                hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            if fused:
+                hidden_states, *_, residual = fused_rms_mxfp4_quant(
+                    hidden_states,
+                    self.input_layernorm.weight,
+                    self.input_layernorm.variance_epsilon,
+                    None,
+                    None,
+                    None,
+                    residual,
+                )
+            else:
+                hidden_states, residual = self.input_layernorm(hidden_states, residual)
 
         attn_out = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
             forward_batch=forward_batch,
         )
-        hidden_states, residual = self.post_attention_layernorm(attn_out, residual)
+
+        if fused:
+            hidden_states, *_, residual = fused_rms_mxfp4_quant(
+                attn_out,
+                self.post_attention_layernorm.weight,
+                self.post_attention_layernorm.variance_epsilon,
+                None,
+                None,
+                None,
+                residual,
+            )
+        else:
+            hidden_states, residual = self.post_attention_layernorm(attn_out, residual)
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
