@@ -960,10 +960,17 @@ class DFlashWorker:
         with torch.inference_mode():
             ctx_hidden = self.draft_model.project_target_hidden(
                 draft_input.target_hidden
-            )  # [sum(ctx), hidden]
-            if ctx_hidden.shape[0] != ctx_cache_loc.numel():
+            )  # [sum(ctx), hidden], or a pre-quantized (fp4, scale) tuple on MXFP4
+            # On the MXFP4 fused path project_target_hidden returns (fp4, scale);
+            # the row count is the first dim of the packed fp4 tensor.
+            ctx_rows = (
+                ctx_hidden[0].shape[0]
+                if isinstance(ctx_hidden, tuple)
+                else ctx_hidden.shape[0]
+            )
+            if ctx_rows != ctx_cache_loc.numel():
                 raise RuntimeError(
-                    f"DFLASH ctx_hidden/cache_loc mismatch: {ctx_hidden.shape[0]} vs {ctx_cache_loc.numel()}."
+                    f"DFLASH ctx_hidden/cache_loc mismatch: {ctx_rows} vs {ctx_cache_loc.numel()}."
                 )
 
             if self._use_fused_kv_materialize and self._fused_kv_helper is not None:

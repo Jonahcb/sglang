@@ -442,8 +442,29 @@ class DFlashDraftModel(nn.Module):
 
         self.block_size = draft_config.resolve_block_size(default=16)
 
-    def project_target_hidden(self, target_hidden: torch.Tensor) -> torch.Tensor:
-        """Project concatenated target-layer hidden states into draft hidden_size."""
+        # Lazily-resolved: do the draft layers' qkv_proj hold MXFP4 weights? If so,
+        # project_target_hidden can fuse hidden_norm's RMSNorm with the fp4 quant
+        # (see project_target_hidden) so the per-layer kv_proj_only skips its
+        # standalone dynamic_mxfp4_quant during ctx KV materialization.
+        self._ctx_mxfp4_fused: Optional[bool] = None
+
+    def _fuse_ctx_norm_quant(self) -> bool:
+        if self._ctx_mxfp4_fused is None:
+            self._ctx_mxfp4_fused = len(self.layers) > 0 and _linear_is_mxfp4(
+                self.layers[0].self_attn.qkv_proj
+            )
+        return self._ctx_mxfp4_fused
+
+    def project_target_hidden(self, target_hidden: torch.Tensor):
+        """Project concatenated target-layer hidden states into draft hidden_size.
+
+        Returns either the normalized bf16 hidden states, or -- when the draft's
+        qkv_proj is MXFP4 -- a pre-quantized ``(fp4, scale)`` tuple. The tuple is
+        produced by fusing hidden_norm's RMSNorm with the MXFP4 quant in a single
+        kernel (mirroring input_layernorm in the decoder layers). Because the
+        result is shared by every draft layer's kv_proj_only, the quant runs ONCE
+        here instead of once per layer inside each qkv_proj.
+        """
         expected = int(self.fc.in_features)
         if target_hidden.ndim != 2 or int(target_hidden.shape[-1]) != expected:
             raise ValueError(
@@ -454,7 +475,20 @@ class DFlashDraftModel(nn.Module):
                 "This usually means the target model is capturing a different number of layer features than "
                 "the draft checkpoint/config expects."
             )
-        return self.hidden_norm(self.fc(target_hidden))
+        projected = self.fc(target_hidden)
+        if self._fuse_ctx_norm_quant():
+            # (out1_fp4, out1_bs), out1, out2, out_res1 -- we only need the fp4 tuple.
+            quant_tuple, *_ = fused_rms_mxfp4_quant(
+                projected,
+                self.hidden_norm.weight,
+                self.hidden_norm.variance_epsilon,
+                None,
+                None,
+                None,
+                None,
+            )
+            return quant_tuple
+        return self.hidden_norm(projected)
 
     @torch.no_grad()
     def forward(
