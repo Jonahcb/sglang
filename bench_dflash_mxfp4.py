@@ -39,7 +39,22 @@ import urllib.request
 TARGET_MODEL = "Qwen/Qwen3.5-35B-A3B"
 DRAFT_MODEL = "z-lab/Qwen3.5-35B-A3B-DFlash"
 
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+def _find_sglang_root():
+    """Locate the sglang repo root that holds benchmark/gsm8k/bench_sglang.py.
+
+    This script normally lives at the sglang repo root, but it is also mirrored
+    into the spec-debugging snapshot. When run from the mirror, __file__'s dir
+    has no benchmark/ tree, so fall back to $SGLANG_REPO and the conventional
+    /sgl-workspace/sglang checkout (the one bootstrap.sh creates).
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in filter(None, [os.environ.get("SGLANG_REPO"), here, "/sgl-workspace/sglang"]):
+        if os.path.isfile(os.path.join(cand, "benchmark", "gsm8k", "bench_sglang.py")):
+            return cand
+    return here
+
+
+REPO_ROOT = _find_sglang_root()
 GSM8K_BENCH = os.path.join(REPO_ROOT, "benchmark", "gsm8k", "bench_sglang.py")
 MTBENCH_BENCH = os.path.join(REPO_ROOT, "benchmark", "mtbench", "bench_sglang.py")
 
