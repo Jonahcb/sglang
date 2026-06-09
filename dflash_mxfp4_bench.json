@@ -1,0 +1,102 @@
+[
+  {
+    "config": "bf16",
+    "task": "gsm8k",
+    "batch_size": 1,
+    "wall_time_s": 105.8,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 347.073,
+    "accuracy": 0.9
+  },
+  {
+    "config": "bf16",
+    "task": "gsm8k",
+    "batch_size": 4,
+    "wall_time_s": 46.4,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 809.148,
+    "accuracy": 0.91
+  },
+  {
+    "config": "bf16",
+    "task": "gsm8k",
+    "batch_size": 8,
+    "wall_time_s": 35.5,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 1163.781,
+    "accuracy": 0.9
+  },
+  {
+    "config": "bf16",
+    "task": "gsm8k",
+    "batch_size": 16,
+    "wall_time_s": 27.4,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 1629.683,
+    "accuracy": 0.895
+  },
+  {
+    "config": "bf16",
+    "task": "gsm8k",
+    "batch_size": 32,
+    "wall_time_s": 22.9,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 1962.407,
+    "accuracy": 0.92
+  },
+  {
+    "config": "mxfp4",
+    "task": "gsm8k",
+    "batch_size": 1,
+    "wall_time_s": 107.2,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 326.187,
+    "accuracy": 0.91
+  },
+  {
+    "config": "mxfp4",
+    "task": "gsm8k",
+    "batch_size": 4,
+    "wall_time_s": 50.8,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 792.448,
+    "accuracy": 0.89
+  },
+  {
+    "config": "mxfp4",
+    "task": "gsm8k",
+    "batch_size": 8,
+    "wall_time_s": 38.0,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 1129.397,
+    "accuracy": 0.87
+  },
+  {
+    "config": "mxfp4",
+    "task": "gsm8k",
+    "batch_size": 16,
+    "wall_time_s": 28.7,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 1492.209,
+    "accuracy": 0.905
+  },
+  {
+    "config": "mxfp4",
+    "task": "gsm8k",
+    "batch_size": 32,
+    "wall_time_s": 23.9,
+    "metric_name": "throughput_tok_s",
+    "higher_is_better": true,
+    "metric": 1982.319,
+    "accuracy": 0.905
+  }
+]

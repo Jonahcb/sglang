@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import math
 from copy import deepcopy
@@ -35,6 +36,21 @@ _is_npu = is_npu()
 
 
 logger = logging.getLogger(__name__)
+
+
+def _profiler_span(name: str):
+    """Return a profiler ``record_function`` span when profiling is active.
+
+    DFLASH runs the draft and target (verify) models in the *same* process and
+    thread, so they cannot be separated by pid/tid in a Kineto trace. These
+    spans bracket the timeline so every op/kernel can be attributed to either
+    the draft or the verify phase. The span is a no-op (zero overhead) when no
+    profiler is running, so it is safe to leave in the decode hot path.
+    """
+    if torch.autograd._profiler_enabled():
+        return torch.profiler.record_function(name)
+    return contextlib.nullcontext()
+
 
 _FusedKVMaterializeHelper = None
 
@@ -1279,7 +1295,13 @@ class DFlashWorker:
                 "This usually means the request did not complete the prefill stage."
             )
 
-        self._prepare_for_speculative_decoding(batch, draft_input)
+        # --- Draft phase: drafts the candidate block with the draft model.
+        # This span covers ALL draft-side steps, not just the draft model
+        # forward: committed-token KV materialization, draft block setup / KV
+        # allocation, the draft forward itself, and head sampling all happen
+        # inside _prepare_for_speculative_decoding.
+        with _profiler_span("dflash_draft"):
+            self._prepare_for_speculative_decoding(batch, draft_input)
 
         assert batch.forward_mode.is_target_verify()
         verify_input = batch.spec_info
@@ -1292,9 +1314,11 @@ class DFlashWorker:
             batch.seq_lens.clone() if need_mamba_verify_commit else None
         )
 
-        batch_result = self.target_worker.forward_batch_generation(
-            batch, is_verify=True, **kwargs
-        )
+        # --- Verify phase: the target model forward over the drafted block.
+        with _profiler_span("dflash_verify"):
+            batch_result = self.target_worker.forward_batch_generation(
+                batch, is_verify=True, **kwargs
+            )
         logits_output, can_run_cuda_graph = (
             batch_result.logits_output,
             batch_result.can_run_cuda_graph,
@@ -1323,7 +1347,11 @@ class DFlashWorker:
         draft_input.bonus_tokens = new_bonus_tokens
         draft_input.target_hidden = next_target_hidden
         draft_input.ctx_lens = commit_lens
-        self._append_target_hidden_to_draft_kv(batch, draft_input)
+        # Write the committed verify tokens into the draft KV cache for the next
+        # iteration. This is draft-side work, so it shares the "dflash_draft"
+        # span name and aggregates with the drafting phase above.
+        with _profiler_span("dflash_draft"):
+            self._append_target_hidden_to_draft_kv(batch, draft_input)
         batch.spec_info = draft_input
         batch.forward_mode = ForwardMode.DECODE
 

@@ -146,7 +146,13 @@ class AiterRunnerCore(MoeRunnerCore):
             return AiterRunnerOutput(hidden_states=runner_input.hidden_states)
 
         from aiter.fused_moe import fused_moe
-        from aiter.ops.flydsl.moe_common import GateMode
+
+        try:
+            from aiter.ops.flydsl.moe_common import GateMode
+        except ModuleNotFoundError:
+            # Older aiter builds (e.g. the one vendored here) don't ship the
+            # moe_common shim; GateMode lives in the kernel module instead.
+            from aiter.ops.flydsl.kernels.mixed_moe_gemm_2stage import GateMode
 
         from sglang.srt.environ import envs
 
