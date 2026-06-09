@@ -29,7 +29,7 @@ from sglang.srt.speculative.dflash_utils import (
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import assign_req_to_token_pool_func
-from sglang.srt.utils import is_cuda, is_npu
+from sglang.srt.utils import get_bool_env_var, is_cuda, is_npu
 
 _is_npu = is_npu()
 
@@ -233,6 +233,40 @@ class DFlashWorker:
         self._fused_kv_helper: Optional[object] = None
         if self._use_fused_kv_materialize:
             self._init_fused_kv_helper()
+
+        # CUDA-graph the ctx->draft-KV materialization band (the per-layer kv_proj
+        # loop). Only meaningful for the sequential (non-fused) path, which is the
+        # ROCm/HIP default and the source of the MXFP4 decode idle gaps. The fused
+        # CUDA helper already collapses the launches, so leave it untouched there.
+        self._ctx_kv_graph_runner: Optional[object] = None
+        _ctxkv_env = get_bool_env_var("SGLANG_DFLASH_CUDA_GRAPH_CTX_KV", "true")
+        _ctxkv_disable_cg = getattr(
+            self.draft_model_runner.server_args, "disable_cuda_graph", False
+        )
+        if (
+            not self._use_fused_kv_materialize
+            and _ctxkv_env
+            and not _ctxkv_disable_cg
+        ):
+            try:
+                from sglang.srt.speculative.dflash_ctx_kv_cuda_graph_runner import (
+                    DFlashCtxKVGraphRunner,
+                )
+
+                self._ctx_kv_graph_runner = DFlashCtxKVGraphRunner(self)
+                if self.tp_rank == 0:
+                    logger.info(
+                        "DFLASH ctx-KV CUDA graph runner enabled. capture_bs=%s, block_size=%d",
+                        self._ctx_kv_graph_runner.capture_bs,
+                        self.block_size,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "DFLASH ctx-KV CUDA graph runner init failed; using eager KV "
+                    "materialization: %s",
+                    e,
+                )
+                self._ctx_kv_graph_runner = None
 
     def _init_fused_kv_helper(self) -> None:
         """Initialize the fused KV materialization helper with pre-stacked weights."""
@@ -919,79 +953,122 @@ class DFlashWorker:
             ctx_lens = ctx_lens.to(device, non_blocking=True)
         ctx_start = batch.seq_lens.to(torch.int64) - ctx_lens.to(torch.int64)
 
-        if bs == 1:
-            # Fast path for single request.
-            max_ctx = int(total_ctx)
-            if max_ctx <= self._block_pos_offsets.numel():
-                r = self._block_pos_offsets[:max_ctx]
-            else:
-                r = torch.arange(max_ctx, device=device, dtype=torch.int64)
-            pos2d = ctx_start[:, None] + r[None, :]  # [1, ctx]
-            cache2d = target_req_to_token[req_pool_indices[:, None], pos2d]  # [1, ctx]
-            ctx_cache_loc = cache2d.reshape(-1).to(torch.int64)  # [ctx]
-            ctx_positions = pos2d.reshape(-1)  # [ctx]
-        else:
-            # In decode mode, ctx_lens <= block_size so we can skip the .item() sync.
-            if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
-                max_ctx = int(ctx_lens.max().item())
-            else:
-                max_ctx = int(self.block_size)
-            if max_ctx <= 0:
-                raise RuntimeError(f"DFLASH invalid max_ctx={max_ctx} for KV append.")
-
-            if max_ctx <= self._block_pos_offsets.numel():
-                r = self._block_pos_offsets[:max_ctx]
-            else:
-                r = torch.arange(max_ctx, device=device, dtype=torch.int64)
-            r = r[None, :]  # [1, max_ctx]
-            pos2d = ctx_start[:, None] + r  # [bs, max_ctx]
-            mask = r < ctx_lens[:, None]
-
-            # Batched gather of cache locations and positions.
-            ctx_cache_loc = self._gather_req_to_token_masked(
-                req_to_token=target_req_to_token,
-                req_pool_indices=req_pool_indices,
-                pos2d=pos2d,
-                mask=mask,
-                context="DFLASH target hidden KV append",
-            )  # [sum(ctx_lens)]
-            ctx_positions = pos2d[mask]  # [sum(ctx_lens)]
-
-        with torch.inference_mode():
-            ctx_hidden = self.draft_model.project_target_hidden(
-                draft_input.target_hidden
-            )  # [sum(ctx), hidden], or a pre-quantized (fp4, scale) tuple on MXFP4
-            # On the MXFP4 fused path project_target_hidden returns (fp4, scale);
-            # the row count is the first dim of the packed fp4 tensor.
-            ctx_rows = (
-                ctx_hidden[0].shape[0]
-                if isinstance(ctx_hidden, tuple)
-                else ctx_hidden.shape[0]
-            )
-            if ctx_rows != ctx_cache_loc.numel():
-                raise RuntimeError(
-                    f"DFLASH ctx_hidden/cache_loc mismatch: {ctx_rows} vs {ctx_cache_loc.numel()}."
+        # The graph path applies to the TARGET_VERIFY-mode append (the per-step
+        # materialization of the committed verify tokens), where each request's
+        # ctx_lens is bounded by block_size, so the fixed [bs, block_size]
+        # rectangle covers it. Prefill/extend appends (ctx = full prompt length)
+        # keep the eager, variable-length path below. Note is_extend() is True for
+        # TARGET_VERIFY, so it cannot be used to distinguish the two here.
+        graphed = False
+        if (
+            self._ctx_kv_graph_runner is not None
+            and batch.forward_mode.is_target_verify()
+            and self._ctx_kv_graph_runner.can_run(bs)
+        ):
+            try:
+                r_g = self._block_pos_offsets[None, :]  # [1, block_size]
+                pos2d_g = ctx_start[:, None] + r_g  # [bs, block_size]
+                mask_g = r_g < ctx_lens[:, None]  # [bs, block_size]
+                safe_pos2d_g = pos2d_g.masked_fill(~mask_g, 0)
+                cache_loc2d_g = target_req_to_token[
+                    req_pool_indices[:, None], safe_pos2d_g
+                ].to(
+                    torch.int64
+                )  # [bs, block_size]
+                with torch.inference_mode():
+                    graphed = self._ctx_kv_graph_runner.materialize(
+                        target_hidden=draft_input.target_hidden,
+                        positions_2d=pos2d_g,
+                        cache_loc_2d=cache_loc2d_g,
+                        mask=mask_g,
+                        bs=bs,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "DFLASH ctx-KV graph materialize failed; falling back to eager "
+                    "path for this step: %s",
+                    e,
                 )
+                graphed = False
 
-            if self._use_fused_kv_materialize and self._fused_kv_helper is not None:
-                try:
-                    self._append_target_hidden_fused(
-                        ctx_hidden, ctx_positions, ctx_cache_loc
+        if not graphed:
+            if bs == 1:
+                # Fast path for single request.
+                max_ctx = int(total_ctx)
+                if max_ctx <= self._block_pos_offsets.numel():
+                    r = self._block_pos_offsets[:max_ctx]
+                else:
+                    r = torch.arange(max_ctx, device=device, dtype=torch.int64)
+                pos2d = ctx_start[:, None] + r[None, :]  # [1, ctx]
+                cache2d = target_req_to_token[
+                    req_pool_indices[:, None], pos2d
+                ]  # [1, ctx]
+                ctx_cache_loc = cache2d.reshape(-1).to(torch.int64)  # [ctx]
+                ctx_positions = pos2d.reshape(-1)  # [ctx]
+            else:
+                # In decode mode, ctx_lens <= block_size so we can skip the .item() sync.
+                if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
+                    max_ctx = int(ctx_lens.max().item())
+                else:
+                    max_ctx = int(self.block_size)
+                if max_ctx <= 0:
+                    raise RuntimeError(
+                        f"DFLASH invalid max_ctx={max_ctx} for KV append."
                     )
-                except Exception as e:
-                    logger.warning(
-                        "DFLASH fused KV append failed; falling back to sequential path: %s",
-                        e,
+
+                if max_ctx <= self._block_pos_offsets.numel():
+                    r = self._block_pos_offsets[:max_ctx]
+                else:
+                    r = torch.arange(max_ctx, device=device, dtype=torch.int64)
+                r = r[None, :]  # [1, max_ctx]
+                pos2d = ctx_start[:, None] + r  # [bs, max_ctx]
+                mask = r < ctx_lens[:, None]
+
+                # Batched gather of cache locations and positions.
+                ctx_cache_loc = self._gather_req_to_token_masked(
+                    req_to_token=target_req_to_token,
+                    req_pool_indices=req_pool_indices,
+                    pos2d=pos2d,
+                    mask=mask,
+                    context="DFLASH target hidden KV append",
+                )  # [sum(ctx_lens)]
+                ctx_positions = pos2d[mask]  # [sum(ctx_lens)]
+
+            with torch.inference_mode():
+                ctx_hidden = self.draft_model.project_target_hidden(
+                    draft_input.target_hidden
+                )  # [sum(ctx), hidden], or a pre-quantized (fp4, scale) tuple on MXFP4
+                # On the MXFP4 fused path project_target_hidden returns (fp4, scale);
+                # the row count is the first dim of the packed fp4 tensor.
+                ctx_rows = (
+                    ctx_hidden[0].shape[0]
+                    if isinstance(ctx_hidden, tuple)
+                    else ctx_hidden.shape[0]
+                )
+                if ctx_rows != ctx_cache_loc.numel():
+                    raise RuntimeError(
+                        f"DFLASH ctx_hidden/cache_loc mismatch: {ctx_rows} vs {ctx_cache_loc.numel()}."
                     )
-                    self._use_fused_kv_materialize = False
-                    self._fused_kv_helper = None
+
+                if self._use_fused_kv_materialize and self._fused_kv_helper is not None:
+                    try:
+                        self._append_target_hidden_fused(
+                            ctx_hidden, ctx_positions, ctx_cache_loc
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "DFLASH fused KV append failed; falling back to sequential path: %s",
+                            e,
+                        )
+                        self._use_fused_kv_materialize = False
+                        self._fused_kv_helper = None
+                        self._append_target_hidden_sequential(
+                            ctx_hidden, ctx_positions, ctx_cache_loc
+                        )
+                else:
                     self._append_target_hidden_sequential(
                         ctx_hidden, ctx_positions, ctx_cache_loc
                     )
-            else:
-                self._append_target_hidden_sequential(
-                    ctx_hidden, ctx_positions, ctx_cache_loc
-                )
 
         if self.use_compact_draft_cache:
             new_draft_seq_lens = self._compute_compact_draft_seq_lens(batch.seq_lens)
