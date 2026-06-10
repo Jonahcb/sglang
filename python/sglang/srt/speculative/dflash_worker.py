@@ -230,6 +230,11 @@ class DFlashWorker:
         )
         self._draft_block_end_buf: Optional[torch.Tensor] = None  # [cap_bs]
         self._draft_seq_lens_cpu_buf: Optional[torch.Tensor] = None  # [cap_bs] on CPU
+        # Draft scratch-block KV slots awaiting free. Set in
+        # _prepare_for_speculative_decoding (the draft alloc) and freed after the
+        # target verify forward in forward_batch_generation, so the alloc/free do
+        # not sit between the draft and target forwards.
+        self._pending_draft_block_free: Optional[torch.Tensor] = None
         self._draft_block_spec_info = DFlashVerifyInput(
             draft_token=torch.empty((0,), dtype=torch.long, device=self.device),
             positions=torch.empty((0,), dtype=torch.int64, device=self.device),
@@ -576,6 +581,22 @@ class DFlashWorker:
 
         return int(resolved_id)
 
+    def _free_pending_draft_block(self) -> None:
+        """Free the deferred draft scratch-block KV slots (page_size == 1 path).
+
+        These exact slot indices were allocated in
+        _prepare_for_speculative_decoding and must be returned to the shared
+        allocator after the target verify forward. Freeing the specific indices
+        (rather than restore_state) is required because the draft worker shares
+        the target's allocator, so a wholesale state rewind would also undo the
+        verify allocation.
+        """
+        block_cache_loc = self._pending_draft_block_free
+        if block_cache_loc is None:
+            return
+        self._pending_draft_block_free = None
+        self.draft_model_runner.token_to_kv_pool_allocator.free(block_cache_loc)
+
     def _prepare_for_speculative_decoding(
         self, batch: ScheduleBatch, draft_input: DFlashDraftInput
     ):
@@ -667,7 +688,21 @@ class DFlashWorker:
             draft_prefix_lens_cpu = batch.seq_lens_cpu.to(torch.int32)
         seq_lens_cpu.copy_(draft_prefix_lens_cpu)
         allocator = self.draft_model_runner.token_to_kv_pool_allocator
-        token_to_kv_pool_state_backup = allocator.backup_state()
+        # The speculative draft block is scratch KV: it is written and read only
+        # within the draft forward below, then dropped. Historically it was freed
+        # immediately after the draft forward via allocator.restore_state() in a
+        # finally-block, which sits *between* the draft and target forwards. To
+        # allow fusing those two forwards into a single CUDA graph, defer the free
+        # until after the target verify forward (page_size == 1 only). Because the
+        # draft worker shares the target's allocator (see __init__), a wholesale
+        # restore_state() would also rewind the verify allocation, so the deferred
+        # path frees these exact block indices explicitly. For page_size > 1 the
+        # block can share the prefix's partial last page, so an explicit page-
+        # granular free is unsafe; keep the original immediate restore there.
+        defer_block_free = self.page_size == 1
+        token_to_kv_pool_state_backup = (
+            None if defer_block_free else allocator.backup_state()
+        )
         try:
             if self.page_size == 1:
                 block_cache_loc = allocator.alloc(bs * self.block_size)
@@ -691,6 +726,10 @@ class DFlashWorker:
                     f"DFLASH draft OOM when allocating {bs * self.block_size} block tokens."
                 )
 
+            if defer_block_free:
+                # Freed post-verify by forward_batch_generation.
+                self._pending_draft_block_free = block_cache_loc
+
             assign_req_to_token_pool_func(
                 batch.req_pool_indices,
                 self.draft_model_runner.req_to_token_pool.req_to_token,
@@ -700,9 +739,9 @@ class DFlashWorker:
                 bs,
             )
 
-            # Use TARGET_VERIFY mode (cuda-graphable) to run a fixed-size draft block.
-            # In this mode, `seq_lens` stores the prefix lengths; attention backends
-            # derive kv_len by adding `draft_token_num`.
+            # Use TARGET_VERIFY mode (cuda-graphable) to run a fixed-size draft
+            # block. In this mode, `seq_lens` stores the prefix lengths; attention
+            # backends derive kv_len by adding `draft_token_num`.
             draft_spec_info = self._draft_block_spec_info
             seq_lens = draft_prefix_lens
             # Host sum of the mirror computed above -- no D2H.
@@ -728,8 +767,9 @@ class DFlashWorker:
                     forward_batch
                 ).logits_output
         finally:
-            # Drop the speculative block from the shared allocator (EAGLE3-style).
-            allocator.restore_state(token_to_kv_pool_state_backup)
+            if not defer_block_free:
+                # Drop the speculative block from the shared allocator (EAGLE3-style).
+                allocator.restore_state(token_to_kv_pool_state_backup)
 
         draft_hidden = draft_logits_output.hidden_states
         if draft_hidden is None:
@@ -1323,6 +1363,12 @@ class DFlashWorker:
             batch_result.logits_output,
             batch_result.can_run_cuda_graph,
         )
+
+        # Free the speculative draft scratch block now that both the draft forward
+        # (which wrote+read it) and the target verify forward have run. Deferred
+        # from _prepare_for_speculative_decoding so the free does not sit between
+        # the two forwards (a prerequisite for fusing them into one CUDA graph).
+        self._free_pending_draft_block()
 
         (
             new_bonus_tokens,

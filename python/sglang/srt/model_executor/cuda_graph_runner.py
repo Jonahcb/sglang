@@ -840,9 +840,59 @@ class CudaGraphRunner:
     def capture_one_batch_size(
         self, bs: int, forward: Callable, stream_idx: Optional[int] = None
     ):
-        buffers = self.buffers
         graph = self._create_device_graph()
         stream = self.stream
+        step = self._build_capture_step(bs, forward, stream_idx)
+        attn_backend = step.attn_backend
+        run_once = step.run_once
+
+        # All setup hooks read get_attn_backend() (TboForwardBatchPreparer,
+        # DeepEP adapter, …) so they run inside the ForwardContext bound to this
+        # backend, exactly as before the _build_capture_step extraction.
+        with forward_context(ForwardContext(attn_backend=attn_backend)):
+            step.setup_out_graph()
+
+            self.deepep_adapter.capture(is_extend_in_batch=False)
+
+            canary_ctx = (
+                c.with_active_single_forward_manager(0)
+                if (c := self.model_runner.canary_manager) is not None
+                else contextlib.nullcontext()
+            )
+            with canary_ctx:
+                for _ in range(2):
+                    self.device_module.synchronize()
+                    self.model_runner.tp_group.barrier()
+                    run_once()
+                    attn_backend.on_after_cuda_graph_warmup()
+
+                if get_global_graph_memory_pool() is None:
+                    set_global_graph_memory_pool(self.device_module.graph_pool_handle())
+                # Set graph pool id globally to be able to use symmetric memory
+                set_graph_pool_id(get_global_graph_memory_pool())
+
+                out = self._capture_graph(
+                    graph, get_global_graph_memory_pool(), stream, run_once
+                )
+
+        return graph, out
+
+    def _build_capture_step(
+        self, bs: int, forward: Callable, stream_idx: Optional[int] = None
+    ):
+        """Assemble the per-batch-size capture step without capturing it.
+
+        Returns a namespace exposing ``forward_batch``, ``attn_backend``,
+        ``setup_out_graph()`` (one-time out-of-graph metadata setup) and
+        ``run_once()`` (the in-graph forward body). ``capture_one_batch_size``
+        runs these in a single ForwardContext for the normal path; the DFlash
+        fused runner composes two steps (draft + target) into one graph by
+        running each step's closures under its own backend's ForwardContext.
+
+        Both ``setup_out_graph`` and ``run_once`` assume the caller has already
+        entered the matching ForwardContext (matching pre-extraction behavior).
+        """
+        buffers = self.buffers
         num_tokens = bs * self.num_tokens_per_bs
 
         # Graph inputs: owned slots come from the registry; the rest off `buffers`.
@@ -976,10 +1026,11 @@ class CudaGraphRunner:
         if buffers.ngram_embedding_info is not None:
             forward_batch.ngram_embedding_info = buffers.ngram_embedding_info.slice(bs)
 
-        # All setup hooks below read get_attn_backend() (TboForwardBatchPreparer,
-        # DeepEP adapter, …) so they must run inside the same ForwardContext
-        # that wraps the warmup/capture forward.
-        with forward_context(ForwardContext(attn_backend=attn_backend)):
+        # ``setup_out_graph`` and ``run_once`` assume the CALLER has already
+        # entered the matching ForwardContext (see capture_one_batch_size). The
+        # setup hooks read get_attn_backend() (TboForwardBatchPreparer, DeepEP
+        # adapter, …) so the context must be active when they run.
+        def setup_out_graph():
             self.tbo_plugin.capture_one_batch_size(forward_batch, num_tokens=num_tokens)
 
             if lora_ids is not None:
@@ -987,69 +1038,50 @@ class CudaGraphRunner:
 
             attn_backend.init_forward_metadata_out_graph(forward_batch, in_capture=True)
 
-            def run_once():
-                # Must run inside the capture block: warmup mutations here are
-                # undone by on_after_cuda_graph_warmup so capture starts clean.
-                attn_backend.init_forward_metadata_in_graph(forward_batch)
+        def run_once():
+            # Must run inside the capture block: warmup mutations here are
+            # undone by on_after_cuda_graph_warmup so capture starts clean.
+            attn_backend.init_forward_metadata_in_graph(forward_batch)
 
-                forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = (
-                    None
-                )
-                set_dp_buffer_len(
-                    global_dp_buffer_len,
-                    num_tokens,
-                    forward_batch.dp_padding_mode.is_max_len(),
-                    global_num_tokens_cpu,
-                )
-                set_is_extend_in_batch(False)
-
-                kwargs = {}
-                if (
-                    self.pp_size > 1
-                    and "pp_proxy_tensors" in inspect.signature(forward).parameters
-                ):
-                    kwargs["pp_proxy_tensors"] = PPProxyTensors(
-                        {k: v.clone() for k, v in pp_proxy_tensors.tensors.items()}
-                    )
-                if (
-                    self.model_runner.spec_algorithm.is_dflash()
-                    and self.model_runner.is_draft_worker
-                    and "input_embeds" in inspect.signature(forward).parameters
-                ):
-                    kwargs["input_embeds"] = buffers.input_embeds[:num_tokens]
-
-                logits_output_or_pp_proxy_tensors = forward(
-                    input_ids,
-                    forward_batch.positions,
-                    forward_batch,
-                    **kwargs,
-                )
-                return logits_output_or_pp_proxy_tensors
-
-            self.deepep_adapter.capture(is_extend_in_batch=False)
-
-            canary_ctx = (
-                c.with_active_single_forward_manager(0)
-                if (c := self.model_runner.canary_manager) is not None
-                else contextlib.nullcontext()
+            forward_batch.dp_local_start_pos = forward_batch.dp_local_num_tokens = None
+            set_dp_buffer_len(
+                global_dp_buffer_len,
+                num_tokens,
+                forward_batch.dp_padding_mode.is_max_len(),
+                global_num_tokens_cpu,
             )
-            with canary_ctx:
-                for _ in range(2):
-                    self.device_module.synchronize()
-                    self.model_runner.tp_group.barrier()
-                    run_once()
-                    attn_backend.on_after_cuda_graph_warmup()
+            set_is_extend_in_batch(False)
 
-                if get_global_graph_memory_pool() is None:
-                    set_global_graph_memory_pool(self.device_module.graph_pool_handle())
-                # Set graph pool id globally to be able to use symmetric memory
-                set_graph_pool_id(get_global_graph_memory_pool())
-
-                out = self._capture_graph(
-                    graph, get_global_graph_memory_pool(), stream, run_once
+            kwargs = {}
+            if (
+                self.pp_size > 1
+                and "pp_proxy_tensors" in inspect.signature(forward).parameters
+            ):
+                kwargs["pp_proxy_tensors"] = PPProxyTensors(
+                    {k: v.clone() for k, v in pp_proxy_tensors.tensors.items()}
                 )
+            if (
+                self.model_runner.spec_algorithm.is_dflash()
+                and self.model_runner.is_draft_worker
+                and "input_embeds" in inspect.signature(forward).parameters
+            ):
+                kwargs["input_embeds"] = buffers.input_embeds[:num_tokens]
 
-        return graph, out
+            logits_output_or_pp_proxy_tensors = forward(
+                input_ids,
+                forward_batch.positions,
+                forward_batch,
+                **kwargs,
+            )
+            return logits_output_or_pp_proxy_tensors
+
+        return SimpleNamespace(
+            forward_batch=forward_batch,
+            attn_backend=attn_backend,
+            num_tokens=num_tokens,
+            setup_out_graph=setup_out_graph,
+            run_once=run_once,
+        )
 
     def recapture_if_needed(self, forward_batch: ForwardBatch):
 
