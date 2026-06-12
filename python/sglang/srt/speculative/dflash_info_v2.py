@@ -68,6 +68,19 @@ class DFlashDraftInputV2(SpecInput):
     # Filled by scheduler after dispatch.
     future_indices: Optional[torch.Tensor] = None
 
+    # Pre-built next draft block (the draft-graph rotation). When the fused
+    # KV-mat+draft graph is active, each decode call produces the NEXT block's
+    # draft tokens at its tail (in-graph) and carries them here; the following
+    # call verifies these directly instead of running the draft forward at its
+    # head. None on the eager path / idle / first prefill step. Shape
+    # [bs, block_size] int64. Carried alongside the block's positions and verify
+    # KV slots so the next call's verify + head KV-mat consume them with zero
+    # recompute (they were produced by the prior call's graph against reserved,
+    # over-allocated slots).
+    next_draft_tokens: Optional[torch.Tensor] = None
+    next_positions: Optional[torch.Tensor] = None  # [bs, block_size] int64
+    next_verify_out_cache_loc: Optional[torch.Tensor] = None  # [bs, block_size] int64
+
     def __post_init__(self):
         super().__init__(spec_input_type=SpecInputType.DFLASH_DRAFT)
 
@@ -291,6 +304,11 @@ class DFlashDraftInputV2(SpecInput):
             self.reserved_seq_lens_cpu = self.reserved_seq_lens_cpu[new_indices.cpu()]
             self.reserved_seq_lens_sum = int(self.reserved_seq_lens_cpu.sum().item())
 
+        if self.next_draft_tokens is not None:
+            self.next_draft_tokens = self.next_draft_tokens[new_indices]
+            self.next_positions = self.next_positions[new_indices]
+            self.next_verify_out_cache_loc = self.next_verify_out_cache_loc[new_indices]
+
         if self.future_indices is not None:
             self.future_indices = self.future_indices[new_indices]
             self.direct_carry_valid = False
@@ -330,6 +348,29 @@ class DFlashDraftInputV2(SpecInput):
         elif spec_info.reserved_seq_lens_cpu is not None:
             self.reserved_seq_lens_cpu = spec_info.reserved_seq_lens_cpu
             self.reserved_seq_lens_sum = spec_info.reserved_seq_lens_sum
+
+        # The pre-built draft block is a pure optimization; it can always be
+        # regenerated eagerly. Only keep a merged carry when BOTH sides have one
+        # (two decode batches merging) — otherwise drop it so the next step
+        # rebuilds eagerly, avoiding a stale row-count mismatch with the batch.
+        if (
+            self.next_draft_tokens is not None
+            and spec_info.next_draft_tokens is not None
+        ):
+            self.next_draft_tokens = torch.cat(
+                [self.next_draft_tokens, spec_info.next_draft_tokens], dim=0
+            )
+            self.next_positions = torch.cat(
+                [self.next_positions, spec_info.next_positions], dim=0
+            )
+            self.next_verify_out_cache_loc = torch.cat(
+                [self.next_verify_out_cache_loc, spec_info.next_verify_out_cache_loc],
+                dim=0,
+            )
+        else:
+            self.next_draft_tokens = None
+            self.next_positions = None
+            self.next_verify_out_cache_loc = None
 
         if self.future_indices is not None:
             assert spec_info.future_indices is not None

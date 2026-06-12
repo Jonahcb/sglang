@@ -626,6 +626,9 @@ class Envs:
     SGLANG_ENABLE_SPEC_V2 = EnvBool(True)
     SGLANG_ENABLE_OVERLAP_PLAN_STREAM = EnvBool(False)
     SGLANG_DFLASH_PREFILL_REFILL_TARGET = EnvInt(None)
+    # Capture the DFLASH decode KV-materialization + draft block forward into one
+    # CUDA graph (HIP-gated at the call site). Verify stays eager.
+    SGLANG_ENABLE_DFLASH_DRAFT_CUDA_GRAPH = EnvBool(True)
 
     # Spec Config
     SGLANG_SPEC_ENABLE_STRICT_FILTER_CHECK = EnvBool(True)
