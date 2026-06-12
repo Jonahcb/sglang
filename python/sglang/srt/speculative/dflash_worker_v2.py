@@ -15,6 +15,8 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
     compute_position,
 )
+from sglang.srt.model_executor.forward_context import ForwardContext, forward_context
+from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.server_args import (
     ServerArgs,
     get_global_server_args,
@@ -267,6 +269,13 @@ class DFlashWorkerV2(BaseSpecWorker):
         self._bonus_id_bufs: List[torch.Tensor] = []
         self._out_tokens_bufs: List[torch.Tensor] = []
         self._new_seq_lens_bufs: List[torch.Tensor] = []
+
+        # Unified decode graph (HIP): KV-mat + draft + target in one graph.
+        # Carries the previous step's target hidden into the next step's head
+        # KV-mat (the rotation seam); None until the first decode step seeds it.
+        self.unified_graph_runner = None
+        self._unified_pending = None
+        self.init_unified_cuda_graph()
 
     @property
     def target_worker(self) -> TpModelWorker:
@@ -1172,6 +1181,295 @@ class DFlashWorkerV2(BaseSpecWorker):
             cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
         )
 
+    # ------------------------------------------------------------------
+    # Unified CUDA graph (HIP): KV-mat -> draft -> greedy sample -> target.
+    # The runner (DFlashUnifiedGraphRunner) owns the static buffers and the
+    # torch.cuda.CUDAGraph; these helpers are the worker-side hooks it calls.
+    # ------------------------------------------------------------------
+    def _maybe_run_unified_graph(
+        self,
+        model_worker_batch: ScheduleBatch,
+        draft_input: "DFlashDraftInputV2",
+        bs: int,
+        on_publish,
+    ) -> Optional[GenerationBatchResult]:
+        """Replay the unified decode graph when eligible; else return None.
+
+        First cut: the graph captures the KV-mat head (no-op this step),
+        draft forward, greedy sample, and target verify. KV allocation stays
+        eager in the scheduler (the graph only READS req_to_token), and the
+        post-verify tail (accept/bonus + KV append) stays eager too. The
+        rotation seam (deferring the append into the next step's graph head) is
+        left disabled here (pending=None) so batch-composition changes between
+        steps can't free slots the graph would write.
+        """
+        runner = self.unified_graph_runner
+        if runner is None:
+            return None
+        import os as _os
+
+        if _os.environ.get("DFLASH_UNIFIED_CAPTURE_ONLY") == "1":
+            return None  # diagnostic: capture at init but never replay
+        if not runner.can_run(model_worker_batch):
+            return None
+        # The graph cannot commit mamba state correctly; defer to eager.
+        if hasattr(
+            self.target_worker.model_runner.attn_backend,
+            "update_mamba_state_after_mtp_verify",
+        ):
+            return None
+
+        device = self.device
+        block_size = int(self.block_size)
+        prefix_lens = model_worker_batch.seq_lens
+
+        # seq_lens_cpu for backend metadata sizing — mirror the eager
+        # non-windowed branch's preference order.
+        if draft_input.planning_seq_lens_cpu is not None:
+            seq_lens_cpu = draft_input.planning_seq_lens_cpu
+        elif draft_input.reserved_seq_lens_cpu is not None:
+            seq_lens_cpu = draft_input.reserved_seq_lens_cpu
+        elif model_worker_batch.seq_lens_cpu is not None:
+            seq_lens_cpu = model_worker_batch.seq_lens_cpu
+        else:
+            seq_lens_cpu = prefix_lens.to("cpu", dtype=torch.int32)
+
+        replay_inputs = {
+            "raw_bs": bs,
+            "prefix_lens": prefix_lens.to(torch.int64),
+            "seq_lens_cpu": seq_lens_cpu.to(torch.int32),
+            "req_pool_indices": model_worker_batch.req_pool_indices.to(torch.int64),
+            "verified_id": draft_input.verified_id.to(torch.int64),
+            "pending": None,
+        }
+
+        if not getattr(self, "_unified_replay_logged", False):
+            logger.info("DFLASH unified graph: first replay (bs=%d).", bs)
+            self._unified_replay_logged = True
+        out = runner.replay(replay_inputs)
+
+        draft_tokens = out["draft_tokens"]
+        verify_out_cache_loc_2d = out["verify_out_cache_loc_2d"]
+        verify_out_cache_loc = verify_out_cache_loc_2d.reshape(-1)
+        positions = out["positions"]
+        logits_output = LogitsProcessorOutput(
+            next_token_logits=out["next_token_logits"],
+            hidden_states=out["target_hidden"],
+        )
+
+        return self._finalize_dflash_verify(
+            model_worker_batch=model_worker_batch,
+            draft_input=draft_input,
+            logits_output=logits_output,
+            candidates=draft_tokens,
+            prefix_lens=prefix_lens,
+            positions=positions,
+            verify_out_cache_loc=verify_out_cache_loc,
+            verify_out_cache_loc_2d=verify_out_cache_loc_2d,
+            bs=bs,
+            block_size=block_size,
+            device=device,
+            sampling_info=model_worker_batch.sampling_info,
+            need_mamba_verify_commit=False,
+            seq_lens_pre_verify=None,
+            can_run_cuda_graph=True,
+            on_publish=on_publish,
+        )
+
+    def init_unified_cuda_graph(self) -> None:
+        """Build the unified DFLASH decode graph runner (HIP-gated)."""
+        self.unified_graph_runner = None
+        from sglang.srt.environ import envs
+
+        if not envs.SGLANG_ENABLE_DFLASH_UNIFIED_CUDA_GRAPH.get():
+            return
+        if not is_hip():
+            # CUDA uses the fused-KV `.item()` path which is not capturable here;
+            # the unified graph targets the HIP sequential KV-mat path only.
+            return
+        if self.server_args.disable_cuda_graph:
+            return
+        # First cut targets the user's HIP regime; bail out (eager) otherwise.
+        if self.use_compact_draft_cache:
+            logger.info(
+                "DFLASH unified cuda graph disabled: compact draft cache "
+                "(draft windowing) is not supported yet."
+            )
+            return
+        if int(self.page_size) != 1:
+            logger.info(
+                "DFLASH unified cuda graph disabled: page_size=%s (only 1 "
+                "supported for now).",
+                self.page_size,
+            )
+            return
+        if self._use_fused_kv_materialize:
+            logger.info(
+                "DFLASH unified cuda graph disabled: fused KV materialize is "
+                "on (expected only on CUDA)."
+            )
+            return
+
+        from sglang.srt.speculative.dflash_unified_cuda_graph_runner import (
+            DFlashUnifiedGraphRunner,
+        )
+
+        logger.info("Capture DFLASH unified cuda graph begin.")
+        self.unified_graph_runner = DFlashUnifiedGraphRunner(self)
+        logger.info("Capture DFLASH unified cuda graph end.")
+
+    def _run_unified_capture_body(self, buffers, bs: int) -> dict:
+        """The four-stage span captured into one CUDA graph (HIP).
+
+        Order: head KV-mat (consume previous step's target hidden) -> draft
+        block prep -> draft forward -> greedy sample -> target verify forward.
+        Everything reads/writes the runner's static buffers; the inner forwards
+        run eager (the runner suppressed their per-shape graph dispatch) with
+        attention metadata pre-planned out-of-graph.
+
+        Returns a dict of static output buffers the eager tail consumes.
+        """
+        block_size = int(self.block_size)
+        device = self.device
+        target_model = self.target_worker.model_runner.model
+        embed_module = target_model.get_input_embeddings()
+        lm_head = target_model.lm_head
+
+        block_ids = buffers.block_ids[:bs]
+        positions_2d = buffers.positions_2d[:bs]
+        verify_out_cache_loc_2d = buffers.verify_out_cache_loc_2d[:bs]
+        draft_tokens = buffers.draft_tokens[:bs]
+        prefix_lens = buffers.prefix_lens[:bs]
+        req_pool_indices = buffers.req_pool_indices[:bs]
+        verified_id = buffers.verified_id[:bs]
+        seq_lens_cpu = buffers.seq_lens_cpu[:bs]
+
+        positions = positions_2d.reshape(-1)
+        verify_out_cache_loc = verify_out_cache_loc_2d.reshape(-1)
+
+        # --- 0) Head KV-mat: append the PREVIOUS step's target hidden into the
+        # draft KV cache. commit_lens==0 (first step) makes this a no-op since
+        # the prefix-valid writer commits nothing.
+        self._append_target_hidden_to_draft_kv_by_loc(
+            target_hidden=buffers.pending_target_hidden[: bs * block_size],
+            cache_loc=buffers.pending_cache_loc_2d[:bs].reshape(-1),
+            cache_loc_2d=buffers.pending_cache_loc_2d[:bs],
+            positions=buffers.pending_positions[: bs * block_size],
+            commit_lens=buffers.pending_commit_lens[:bs],
+        )
+
+        # --- 1) Draft block prep (Triton): fills block_ids/positions/cache_loc.
+        _prepare_dflash_draft_block_unchecked(
+            verified_id=verified_id.view(-1),
+            prefix_lens=prefix_lens.view(-1),
+            req_pool_indices=req_pool_indices.view(-1),
+            req_to_token=self.model_runner.req_to_token_pool.req_to_token,
+            block_ids_out=block_ids,
+            positions_out=positions_2d,
+            cache_loc_out=verify_out_cache_loc_2d,
+            mask_token_id=int(self._mask_token_id),
+        )
+
+        noise_embedding = embed_module(block_ids)
+        input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
+
+        draft_forward_batch = ForwardBatch(
+            forward_mode=ForwardMode.TARGET_VERIFY,
+            batch_size=bs,
+            input_ids=block_ids.flatten(),
+            req_pool_indices=req_pool_indices,
+            seq_lens=prefix_lens,
+            out_cache_loc=verify_out_cache_loc,
+            seq_lens_sum=None,
+            seq_lens_cpu=seq_lens_cpu,
+            positions=positions,
+            input_embeds=input_embeds,
+            spec_algorithm=SpeculativeAlgorithm.DFLASH,
+            spec_info=self._draft_block_spec_info,
+            capture_hidden_mode=CaptureHiddenMode.NULL,
+        )
+        draft_forward_batch.mark_forward_metadata_ready()
+
+        # --- 2) Draft forward. Call the BARE model (not model_runner.forward),
+        # bypassing _eager_fb_view's shared registry (it would poison the
+        # registry's inference tensors under our capture) and the inner
+        # per-shape graph dispatch. Metadata was pre-planned by the runner.
+        with (
+            torch.inference_mode(),
+            forward_context(ForwardContext(attn_backend=self.draft_model_runner.attn_backend)),
+        ):
+            draft_logits_output = self.draft_model_runner.model.forward(
+                draft_forward_batch.input_ids,
+                draft_forward_batch.positions,
+                draft_forward_batch,
+                input_embeds=input_embeds,
+            )
+
+        draft_hidden = draft_logits_output.hidden_states.view(bs, block_size, -1)
+        draft_next = self._greedy_sample_from_vocab_parallel_head(
+            hidden_states=draft_hidden[:, 1:, :].reshape(-1, draft_hidden.shape[-1]),
+            lm_head=lm_head,
+        ).view(bs, block_size - 1)
+        draft_tokens[:, 0].copy_(block_ids[:, 0])
+        draft_tokens[:, 1:].copy_(draft_next)
+
+        # --- 3) Target verify forward (eager, bare; metadata pre-planned).
+        verify_input = DFlashVerifyInput(
+            draft_token=draft_tokens.reshape(-1),
+            positions=positions,
+            draft_token_num=block_size,
+            custom_mask=None,
+            capture_hidden_mode=CaptureHiddenMode.FULL,
+        )
+        target_mrope_positions = None
+        if self.target_worker.model_runner.model_is_mrope:
+            # Text-only regime: mrope positions are just `positions` on all 3
+            # axes (delta 0). Fill the static buffer in-graph.
+            mrope_buf = buffers.mrope_positions[:, : bs * block_size]
+            mrope_buf.copy_(positions.unsqueeze(0).expand(3, -1))
+            target_mrope_positions = mrope_buf
+
+        target_forward_batch = ForwardBatch(
+            forward_mode=ForwardMode.TARGET_VERIFY,
+            batch_size=bs,
+            input_ids=draft_tokens.reshape(-1),
+            req_pool_indices=req_pool_indices,
+            seq_lens=prefix_lens,
+            out_cache_loc=verify_out_cache_loc,
+            seq_lens_sum=None,
+            seq_lens_cpu=seq_lens_cpu,
+            positions=positions,
+            mrope_positions=target_mrope_positions,
+            spec_algorithm=SpeculativeAlgorithm.DFLASH,
+            spec_info=verify_input,
+            capture_hidden_mode=CaptureHiddenMode.FULL,
+        )
+        target_forward_batch.mark_forward_metadata_ready()
+        target_positions = (
+            target_mrope_positions
+            if target_mrope_positions is not None
+            else positions
+        )
+        with (
+            torch.inference_mode(),
+            forward_context(
+                ForwardContext(attn_backend=self.target_worker.model_runner.attn_backend)
+            ),
+        ):
+            target_logits_output = self.target_worker.model_runner.model.forward(
+                target_forward_batch.input_ids,
+                target_positions,
+                target_forward_batch,
+            )
+
+        return {
+            "next_token_logits": target_logits_output.next_token_logits,
+            "target_hidden": target_logits_output.hidden_states,
+            "draft_tokens": draft_tokens,
+            "verify_out_cache_loc_2d": verify_out_cache_loc_2d,
+            "positions": positions,
+        }
+
     def forward_batch_generation(
         self,
         model_worker_batch: ScheduleBatch,
@@ -1297,6 +1595,14 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         bs = len(model_worker_batch.seq_lens)
         device = self.device
+
+        # --- Unified CUDA graph fast-path (HIP). Captures KV-mat + draft +
+        # target verify into one graph; allocation + accept/bonus stay eager.
+        unified_result = self._maybe_run_unified_graph(
+            model_worker_batch, draft_input, bs, on_publish
+        )
+        if unified_result is not None:
+            return unified_result
 
         # --- 1) Draft a fixed block with the draft model.
         target_model = self.target_worker.model_runner.model
@@ -1521,6 +1827,51 @@ class DFlashWorkerV2(BaseSpecWorker):
         logits_output = target_out.logits_output
         can_run_cuda_graph = target_out.can_run_cuda_graph
 
+        return self._finalize_dflash_verify(
+            model_worker_batch=model_worker_batch,
+            draft_input=draft_input,
+            logits_output=logits_output,
+            candidates=draft_tokens,
+            prefix_lens=prefix_lens,
+            positions=positions,
+            verify_out_cache_loc=verify_out_cache_loc,
+            verify_out_cache_loc_2d=verify_out_cache_loc_2d,
+            bs=bs,
+            block_size=block_size,
+            device=device,
+            sampling_info=sampling_info,
+            need_mamba_verify_commit=need_mamba_verify_commit,
+            seq_lens_pre_verify=seq_lens_pre_verify,
+            can_run_cuda_graph=can_run_cuda_graph,
+            on_publish=on_publish,
+        )
+
+    def _finalize_dflash_verify(
+        self,
+        *,
+        model_worker_batch: ScheduleBatch,
+        draft_input: "DFlashDraftInputV2",
+        logits_output,
+        candidates: torch.Tensor,
+        prefix_lens: torch.Tensor,
+        positions: torch.Tensor,
+        verify_out_cache_loc: torch.Tensor,
+        verify_out_cache_loc_2d: torch.Tensor,
+        bs: int,
+        block_size: int,
+        device,
+        sampling_info,
+        need_mamba_verify_commit: bool,
+        seq_lens_pre_verify: Optional[torch.Tensor],
+        can_run_cuda_graph: bool,
+        on_publish,
+    ) -> GenerationBatchResult:
+        """Shared post-verify tail: accept/bonus, KV append, next draft input.
+
+        Consumed by both the eager decode path and the unified-graph replay
+        path. Everything here is cheap, data-dependent, and (for accept/bonus)
+        involves uncapturable scalar work, so it stays eager in both.
+        """
         if sampling_info is not None:
             apply_dflash_verify_logits_adjustments(
                 next_token_logits=logits_output.next_token_logits,
@@ -1528,7 +1879,6 @@ class DFlashWorkerV2(BaseSpecWorker):
                 draft_token_num=int(self.block_size),
             )
 
-        candidates = draft_tokens
         new_seq_lens = None
         if (
             sampling_info is not None
