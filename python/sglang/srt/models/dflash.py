@@ -30,6 +30,9 @@ from sglang.srt.speculative.dflash_utils import (
     can_dflash_slice_qkv_weight,
     parse_dflash_draft_config,
 )
+from sglang.srt.speculative.triton_ops.dflash_prepare_block import (
+    _prepare_dflash_draft_block_unchecked,
+)
 from sglang.srt.utils import is_npu
 from sglang.srt.utils.hf_transformers_utils import get_rope_config
 
@@ -364,6 +367,88 @@ class DFlashDraftModel(nn.Module):
         return LogitsProcessorOutput(
             next_token_logits=None,
             hidden_states=hidden_states,
+        )
+
+    @torch.no_grad()
+    def forward_hip(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        forward_batch: ForwardBatch,
+        input_embeds: Optional[torch.Tensor] = None,
+        get_embedding: bool = False,
+        pp_proxy_tensors=None,
+    ) -> LogitsProcessorOutput:
+        """HIP/AMD decode forward with the fused pre-forward prologue inlined.
+
+        Relocates the three worker-side pre-forward steps into the model so the
+        stock decode CUDA graph captures them: (1) materialize the previous
+        iteration's target hidden into the draft KV cache (kv-mat), (2) build the
+        next draft block (block ids / positions / verify-out cache locs), and
+        (3) embed the block. The carried verify(N-1) outputs and the draft block
+        scratch buffers are read off `forward_batch.spec_info`. Everything after
+        the prologue is identical to `forward`.
+
+        NOTE: the attribute wiring (token_to_kv_pool / req_to_token / embed_module
+        / mask_token_id / block_size / carried spec_info fields) is intentionally
+        not connected yet; this method only lays down the prologue body.
+        """
+        spec_info = forward_batch.spec_info
+        bs = int(forward_batch.batch_size)
+        block_size = int(self.block_size)
+
+        # --- (1) kv-mat: materialize carried target hidden into the draft KV cache.
+        target_hidden = spec_info.target_hidden
+        kv_cache_loc_2d = spec_info.kv_cache_loc_2d
+        kv_positions = spec_info.kv_positions
+        commit_lens = spec_info.commit_lens
+        if target_hidden is not None and target_hidden.numel() != 0:
+            ctx_hidden = self.project_target_hidden(target_hidden)
+            for layer in self.layers:
+                attn = layer.self_attn
+                k, v = attn.kv_proj_only(ctx_hidden)
+                k = attn.apply_k_norm(k)
+                k = attn.apply_k_rope(kv_positions, k)
+                k = k.view(-1, attn.num_kv_heads, attn.head_dim)
+                v = v.view(-1, attn.num_kv_heads, attn.head_dim)
+                self.token_to_kv_pool.set_kv_buffer_prefix_valid(
+                    attn.attn,
+                    kv_cache_loc_2d,
+                    commit_lens,
+                    k,
+                    v,
+                    attn.attn.k_scale,
+                    attn.attn.v_scale,
+                )
+
+        # --- (2) draft-block-prep: build the next block's ids / positions / cache locs.
+        block_ids = spec_info.block_ids_buf[:bs]
+        positions_2d = spec_info.block_positions_buf[:bs]
+        verify_out_cache_loc_2d = spec_info.verify_out_cache_loc_buf[:bs]
+        _prepare_dflash_draft_block_unchecked(
+            verified_id=spec_info.verified_id.view(-1),
+            prefix_lens=spec_info.prefix_lens.view(-1),
+            req_pool_indices=forward_batch.req_pool_indices.view(-1),
+            req_to_token=self.req_to_token,
+            block_ids_out=block_ids,
+            positions_out=positions_2d,
+            cache_loc_out=verify_out_cache_loc_2d,
+            mask_token_id=int(self.mask_token_id),
+        )
+
+        # --- (3) embed: project block ids through the target embedding.
+        noise_embedding = self.embed_module(block_ids)
+        input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
+        positions = positions_2d.reshape(-1)
+
+        # --- draft forward: identical to `forward`, so just delegate.
+        return self.forward(
+            input_ids,
+            positions,
+            forward_batch,
+            input_embeds=input_embeds,
+            get_embedding=get_embedding,
+            pp_proxy_tensors=pp_proxy_tensors,
         )
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
