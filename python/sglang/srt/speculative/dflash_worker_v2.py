@@ -1177,6 +1177,10 @@ class DFlashWorkerV2(BaseSpecWorker):
         new_seq_lens: torch.Tensor,
         verify_done: Optional[torch.cuda.Event] = None,
         cur_allocated_seq_lens_cpu: Optional[torch.Tensor] = None,
+        carried_hidden_states: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
+        carried_kv_cache_loc_buf: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
+        carried_kv_cache_loc_2d_buf: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
+        carried_commit_lens: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
     ) -> DFlashDraftInputV2:
         bs = int(new_seq_lens.numel())
         device = verified_id.device
@@ -1185,9 +1189,12 @@ class DFlashWorkerV2(BaseSpecWorker):
             topk_index=torch.empty((bs, 0), device=device, dtype=torch.int64),
             verified_id=verified_id.to(dtype=torch.int32),
             new_seq_lens=new_seq_lens.to(dtype=torch.int64),
-            hidden_states=torch.empty((bs, 0), device=device, dtype=torch.float16),
+            hidden_states=carried_hidden_states, # TODO (jonahbernard): we may have suprised downstream consumers of this so check everything
             verify_done=verify_done,
             cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
+            carried_kv_cache_loc_buf=carried_kv_cache_loc_buf,
+            carried_kv_cache_loc_2d_buf=carried_kv_cache_loc_2d_buf,
+            carried_commit_lens=carried_commit_lens,
         )
 
     def forward_batch_generation(
@@ -1338,6 +1345,27 @@ class DFlashWorkerV2(BaseSpecWorker):
         prefix_lens = model_worker_batch.seq_lens
         positions_2d = self._draft_block_positions_buf[:bs]
         verify_out_cache_loc_2d = self._draft_verify_out_cache_loc_buf[:bs]
+        # TODO (jonahbernard) should I do target_hidden_buf = draft_input.hidden_states[:bs]
+        # TODO (jonahbernard) should I do kv_cache_loc_buf = draft_input.kv_cache_loc_buf[:bs]
+        # TODO (jonahbernard) should I do kv_cache_loc2d_buf = draft_input.kv_cache_loc_buf[:bs]
+        # TODO (jonahbernard) I am using carried_commit_lens but I think I should be using the actual buffer (maybe this is the buffer)
+
+        # jonahbernard INSERTED THIS CODE
+
+        DFlashPreDraftCudaGraphRunner.replay(raw_bs=bs, target_hidden_buf=draft_input.hidden_states, kv_cache_loc_buf=kv_cache_loc_buf, kv_cache_loc2d_buf=kv_cache_loc2d_buf,
+    commit_lens_buf=carried_commit_lens, verified_id_buf=draft_input.verified_id, prefix_lens_buf=prefix_lens, req_pool_indices=model_worker_batch.req_pool_indices, block_ids_buf=block_ids, positions_2d_buf=positions_2d,
+    verify_out_cache_loc_2d_buf=verify_out_cache_loc_2d, mask_token_id=self._mask_token_id,
+            draft_block_ids_buf=self._draft_block_ids_buf, draft_block_positions_buf=self._draft_block_positions_buf,
+        draft_block_tokens_buf=self._draft_block_tokens_buf, draft_verify_out_cache_loc_buf=self._draft_verify_out_cache_loc_buf,
+        draft_block_end_buf=self._draft_block_end_buf,
+        draft_seq_lens_cpu_buf=self._draft_seq_lens_cpu_buf
+        )
+
+
+        # jonahbernard INSERTED THIS CODE
+
+
+
         if self._use_triton_prepare_block:
             try:
                 _prepare_dflash_draft_block_unchecked(
@@ -1457,6 +1485,12 @@ class DFlashWorkerV2(BaseSpecWorker):
             else:
                 seq_lens_cpu.copy_(prefix_lens.to("cpu", dtype=torch.int32))
                 draft_seq_lens_sum = int(prefix_lens.sum().item())
+
+
+
+        # jonahbernard DELETE ALL THE WAY UP TO HERE ============================================================================================================
+
+
 
         forward_batch = ForwardBatch(
             forward_mode=ForwardMode.TARGET_VERIFY,
@@ -1639,6 +1673,8 @@ class DFlashWorkerV2(BaseSpecWorker):
                 commit_lens=commit_lens,
             )
 
+        # jonahbernard DELETE starting here =======================================================================================================================
+
         if new_seq_lens is None:
             new_seq_lens = prefix_lens + commit_lens.to(prefix_lens.dtype)
         if on_publish is not None:
@@ -1660,17 +1696,23 @@ class DFlashWorkerV2(BaseSpecWorker):
             commit_lens=commit_lens,
         )
 
-        # Avoid copying large hidden-state buffers to CPU in overlap scheduling.
-        logits_output.hidden_states = None
+        # jonahbernard DELETE ending here =======================================================================================================================
 
         next_draft_input = self._make_next_draft_input_decode(
             verified_id=bonus,
             new_seq_lens=new_seq_lens,
             cur_allocated_seq_lens_cpu=draft_input.reserved_seq_lens_cpu,
+            carried_hidden_states=logits_output.hidden_states,
+            carried_kv_cache_loc_buf=verify_out_cache_loc,
+            carried_kv_cache_loc_2d_buf=verify_out_cache_loc_2d,
+            carried_commit_lens=commit_lens
         )
         verify_done = torch.get_device_module(device).Event()
         verify_done.record()
         next_draft_input.verify_done = verify_done
+
+        # Avoid copying large hidden-state buffers to CPU in overlap scheduling.
+        logits_output.hidden_states = None
 
         return GenerationBatchResult(
             logits_output=logits_output,
