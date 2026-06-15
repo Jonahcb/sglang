@@ -84,6 +84,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
     ngram_embedding_info: Optional[NgramEmbeddingInfo]
     rids_int: Optional[torch.Tensor]
     bootstrap_room_ids_int: Optional[torch.Tensor]
+    target_hidden_buf: torch.Tensor # TODO (jonahbernard) should this be optional
 
     @classmethod
     def create(
@@ -109,6 +110,9 @@ class DecodeInputBuffers(ForwardInputBuffers):
         hc_hidden_size: Optional[int] = None,
     ) -> DecodeInputBuffers:
         with torch.device(device):
+            # TODO (jonahbernard) Claude thinks it should be aux_hidden_size instead of hidden_size. Figure that out later.
+            target_hidden_buf = torch.zeros((max_num_token, hidden_size), dtype=dtype)
+
             input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
             input_embeds = torch.zeros((max_num_token, hidden_size), dtype=dtype)
             req_pool_indices = torch.zeros((max_bs,), dtype=torch.int64)
@@ -216,6 +220,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
             ngram_embedding_info=ngram_embedding_info,
             rids_int=rids_int,
             bootstrap_room_ids_int=bootstrap_room_ids_int,
+            target_hidden_buf=target_hidden_buf,
         )
 
     def populate_from_forward_batch(

@@ -20,8 +20,14 @@ from sglang.srt.server_args import (
     get_global_server_args,
     set_global_server_args_for_scheduler,
 )
+from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
+    get_batch_sizes_to_capture,
+)
 from sglang.srt.speculative.base_spec_worker import BaseSpecWorker
 from sglang.srt.speculative.dflash_info import DFlashVerifyInput
+from sglang.srt.speculative.dflash_predraft_cuda_graph_runner import (
+    DFlashPreDraftCudaGraphRunner,
+)
 from sglang.srt.speculative.dflash_info_v2 import DFlashDraftInputV2
 from sglang.srt.speculative.dflash_utils import (
     apply_dflash_verify_logits_adjustments,
@@ -305,6 +311,22 @@ class DFlashWorkerV2(BaseSpecWorker):
                     available_mem,
                 )
         self._draft_worker.init_backends(disable_cuda_graph=disable_cuda_graph)
+
+        self._predraft_cuda_graph: Optional[DFlashPreDraftCudaGraphRunner] = None
+        if not disable_cuda_graph:
+            capture_bs, _ = get_batch_sizes_to_capture(
+                self.draft_model_runner, self.block_size
+            )
+            self._predraft_cuda_graph = DFlashPreDraftCudaGraphRunner(
+                model_runner=self.model_runner,
+                append_target_hidden_to_draft_kv_by_loc=self._append_target_hidden_to_draft_kv_by_loc,
+                req_to_token=self.model_runner.req_to_token_pool.req_to_token,
+                embed_module=self.target_worker.model_runner.model.get_input_embeddings(),
+                capture_bs=capture_bs,
+                block_size=self.block_size,
+                mask_token_id=self._mask_token_id,
+                pool=None,
+            )
 
     def _init_fused_kv_helper(self) -> None:
         """Initialize the fused KV materialization helper with pre-stacked weights."""

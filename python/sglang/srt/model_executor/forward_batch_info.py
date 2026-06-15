@@ -421,6 +421,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # === Runtime-filled (set during the forward pass / cuda graph / managers; not at construction) ===
     # For logits and logprobs post processing
     next_token_logits_buffer: torch.Tensor = None
+    # Static buffer the target writes its (aux) hidden states into, shared by
+    # name with the DFlash pre-draft CUDA graph for zero-copy hand-off.
+    target_hidden_buf: torch.Tensor = None
     temperature: torch.Tensor = None
     top_p: torch.Tensor = None
 

@@ -1,13 +1,34 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 
+from sglang.srt.model_executor.input_buffers import ForwardInputBuffers
 from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     BaseCudaGraphRunner,
 )
 from sglang.srt.speculative.triton_ops.dflash_prepare_block import (
     _prepare_dflash_draft_block_unchecked,
 )
+
+
+@dataclass
+class DFlashDraftAndVerifyInputBuffers(ForwardInputBuffers):
+    # Stage 1 (KV materialization) inputs
+    target_hidden_buf: torch.Tensor
+    kv_cache_loc_buf: torch.Tensor
+    kv_cache_loc2d_buf: torch.Tensor
+    commit_lens_buf: torch.Tensor
+    positions_buf: torch.Tensor
+    # Stage 2 (block-prep) inputs
+    verified_id_buf: torch.Tensor
+    prefix_lens_buf: torch.Tensor
+    req_pool_indices: torch.Tensor
+    # Stage 2 outputs (also Stage 3 input via block_ids_buf)
+    block_ids_buf: torch.Tensor
+    positions_2d_buf: torch.Tensor
+    verify_out_cache_loc_2d_buf: torch.Tensor
 
 
 class DFlashPreDraftCudaGraphRunner():
@@ -18,10 +39,13 @@ class DFlashPreDraftCudaGraphRunner():
 
     def __init__(
         self,
+        model_runner,
         append_target_hidden_to_draft_kv_by_loc,
         req_to_token,
         embed_module,
         capture_bs,
+        block_size,
+        mask_token_id,
         pool=None,
     ):
         self.graphs = {}
@@ -33,13 +57,72 @@ class DFlashPreDraftCudaGraphRunner():
         self.embed_module = embed_module
         # capture/replay config
         self.capture_bs = capture_bs
+        self.block_size = int(block_size)
+        self.mask_token_id = int(mask_token_id)
         self._pool = pool
+
+        max_bs = max(self.capture_bs)
+        max_tokens = max_bs * self.block_size
+        hidden_size = model_runner.model_config.hidden_size
+        dtype = model_runner.dtype
+
+        # Initialize static buffers that will be shared across pre-draft CUDA graphs, draft CUDA graphs, and target CUDA graphs
+        with torch.device(model_runner.device):
+            self.buffers = DFlashDraftAndVerifyInputBuffers(
+                # Stage 1 (KV materialization) inputs
+                target_hidden_buf=torch.zeros((max_tokens, hidden_size), dtype=dtype),
+                kv_cache_loc_buf=torch.zeros((max_tokens,), dtype=torch.int64),
+                kv_cache_loc2d_buf=torch.zeros(
+                    (max_bs, self.block_size), dtype=torch.int64
+                ),
+                commit_lens_buf=torch.zeros((max_bs,), dtype=torch.int32),
+                positions_buf=torch.zeros((max_tokens,), dtype=torch.int64),
+                # Stage 2 (block-prep) inputs
+                verified_id_buf=torch.zeros((max_bs,), dtype=torch.int64),
+                prefix_lens_buf=torch.zeros((max_bs,), dtype=torch.int64),
+                req_pool_indices=torch.zeros((max_bs,), dtype=torch.int64),
+                # Stage 2 outputs (also Stage 3 input via block_ids_buf)
+                block_ids_buf=torch.zeros((max_bs, self.block_size), dtype=torch.int64),
+                positions_2d_buf=torch.zeros(
+                    (max_bs, self.block_size), dtype=torch.int64
+                ),
+                verify_out_cache_loc_2d_buf=torch.zeros(
+                    (max_bs, self.block_size), dtype=torch.int64
+                ),
+            )
+
+        # Alias matching buffers onto the shared process-wide pool so the
+        # pre-draft, draft, and target graphs read/write the same storage.
+        self.buffers.share_buffers()
+
+        # Capture the graphs
+        self.capture()
+
+    def capture(self):
+        # Capture all shapes from largest bs to smallest so smaller buckets
+        # reuse the larger memory pool.
+        # TODO (jonahbernard): we are implementing a simple version but will need to add more features based on DecodeCudaGraphRunner.capture()
+        for bs in sorted(self.capture_bs, reverse=True):
+            self.capture_one_shape(bs)
 
     def can_run(self):
         pass
 
-    def capture_one_shape(self, bs, target_hidden_buf, kv_cache_loc_buf, kv_cache_loc2d_buf,
-    commit_lens_buf, verified_id_buf, prefix_lens_buf, req_pool_indices, block_ids_buf, positions_buf, positions_2d_buf, verify_out_cache_loc_2d_buf, mask_token_id):
+    def capture_one_shape(self, bs):
+        # Slice the shared static buffers down to this bucket's batch size.
+        b = self.buffers
+        num_tokens = bs * self.block_size
+        target_hidden_buf = b.target_hidden_buf[:num_tokens]
+        kv_cache_loc_buf = b.kv_cache_loc_buf[:num_tokens]
+        kv_cache_loc2d_buf = b.kv_cache_loc2d_buf[:bs]
+        commit_lens_buf = b.commit_lens_buf[:bs]
+        positions_buf = b.positions_buf[:num_tokens]
+        verified_id_buf = b.verified_id_buf[:bs]
+        prefix_lens_buf = b.prefix_lens_buf[:bs]
+        req_pool_indices = b.req_pool_indices[:bs]
+        block_ids_buf = b.block_ids_buf[:bs]
+        positions_2d_buf = b.positions_2d_buf[:bs]
+        verify_out_cache_loc_2d_buf = b.verify_out_cache_loc_2d_buf[:bs]
 
         # GPU work:
 
@@ -49,7 +132,6 @@ class DFlashPreDraftCudaGraphRunner():
         # 4) done
         def forward_fn ():
             # 1) KV materialization
-            # TODO (jonahbernard): self._append_target_hidden_to_draft_kv_by_loc must be set on this class
             self._append_target_hidden_to_draft_kv_by_loc(
                 target_hidden=target_hidden_buf.reshape(-1, target_hidden_buf.shape[-1]),
                 cache_loc=kv_cache_loc_buf,
@@ -59,7 +141,6 @@ class DFlashPreDraftCudaGraphRunner():
             )
 
             # 2) compute next KV slots
-            # TODO (jonahbernard): self.req_to_token must be set on this class
             _prepare_dflash_draft_block_unchecked(
                         verified_id=verified_id_buf.view(-1),
                         prefix_lens=prefix_lens_buf.view(-1),
@@ -68,13 +149,12 @@ class DFlashPreDraftCudaGraphRunner():
                         block_ids_out=block_ids_buf,
                         positions_out=positions_2d_buf,
                         cache_loc_out=verify_out_cache_loc_2d_buf,
-                        mask_token_id=int(mask_token_id),
+                        mask_token_id=self.mask_token_id,
                     )
 
 
 
             # 3) embed bonus + mask tokens
-            # TODO (jonahbernard): self.embed_module must be set on this class;
             # TODO (jonahbernard): write input_embeds into a static output buffer so replay can read it
             noise_embedding = self.embed_module(block_ids_buf)
             input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
