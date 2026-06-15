@@ -1485,8 +1485,15 @@ class DFlashWorkerV2(BaseSpecWorker):
             )
             verify_out_cache_loc_2d.copy_(verify_out_cache_loc.view(bs, block_size))
 
-        noise_embedding = embed_module(block_ids)
-        input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
+        if run_predraft_graph:
+            # Stage 3 of the captured replay already embedded block_ids into the
+            # shared static buffer; read it instead of re-embedding eagerly.
+            input_embeds = self._predraft_cuda_graph.buffers.input_embeds_buf[
+                : bs * block_size
+            ]
+        else:
+            noise_embedding = embed_module(block_ids)
+            input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
 
         positions = positions_2d.reshape(-1)
         verify_out_cache_loc = verify_out_cache_loc_2d.reshape(-1)

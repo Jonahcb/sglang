@@ -29,6 +29,9 @@ class DFlashDraftAndVerifyInputBuffers(ForwardInputBuffers):
     block_ids_buf: torch.Tensor
     positions_2d_buf: torch.Tensor
     verify_out_cache_loc_2d_buf: torch.Tensor
+    # Stage 3 output: embeddings of the block ids, written every replay so the
+    # worker reads them with no eager re-embed.
+    input_embeds_buf: torch.Tensor
 
 
 class DFlashPreDraftCudaGraphRunner():
@@ -94,6 +97,8 @@ class DFlashPreDraftCudaGraphRunner():
                 verify_out_cache_loc_2d_buf=torch.zeros(
                     (max_bs, self.block_size), dtype=torch.int64
                 ),
+                # Stage 3 output: per-token embeddings (block_size tokens per req).
+                input_embeds_buf=torch.zeros((max_tokens, hidden_size), dtype=dtype),
             )
 
         # Alias matching buffers onto the shared process-wide pool so the
@@ -125,6 +130,7 @@ class DFlashPreDraftCudaGraphRunner():
         block_ids_buf = b.block_ids_buf[:bs]
         positions_2d_buf = b.positions_2d_buf[:bs]
         verify_out_cache_loc_2d_buf = b.verify_out_cache_loc_2d_buf[:bs]
+        input_embeds_buf = b.input_embeds_buf[:num_tokens]
         # Stage 1 loc inputs are views of the Stage 2 loc output (self-feed):
         # this replay's Stage 1 reads what the previous replay's Stage 2 wrote.
         kv_cache_loc2d_buf = verify_out_cache_loc_2d_buf
@@ -162,10 +168,10 @@ class DFlashPreDraftCudaGraphRunner():
 
 
 
-            # 3) embed bonus + mask tokens
-            # TODO (jonahbernard): write input_embeds into a static output buffer so replay can read it
+            # 3) embed bonus + mask tokens into the static output buffer so the
+            # worker reads it after replay with no eager re-embed.
             noise_embedding = self.embed_module(block_ids_buf)
-            input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
+            input_embeds_buf.copy_(noise_embedding.view(-1, noise_embedding.shape[-1]))
 
         # insert warmup run
         # TODO (jonahbernard): make this whole more true to FullCudaGraphRunner once we expand functionality to tp
