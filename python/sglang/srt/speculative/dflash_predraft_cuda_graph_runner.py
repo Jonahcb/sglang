@@ -21,7 +21,6 @@ class DFlashDraftAndVerifyInputBuffers(ForwardInputBuffers):
     # Stage 1 reads it before Stage 2 overwrites it within each captured replay.
     target_hidden_buf: torch.Tensor
     commit_lens_buf: torch.Tensor
-    positions_buf: torch.Tensor
     # Stage 2 (block-prep) inputs
     verified_id_buf: torch.Tensor
     prefix_lens_buf: torch.Tensor
@@ -73,9 +72,8 @@ class DFlashPreDraftCudaGraphRunner():
                 # Stage 1 (KV materialization) inputs
                 target_hidden_buf=torch.zeros((max_tokens, hidden_size), dtype=dtype),
                 commit_lens_buf=torch.zeros((max_bs,), dtype=torch.int32),
-                positions_buf=torch.zeros((max_tokens,), dtype=torch.int64),
                 # Stage 2 (block-prep) inputs
-                verified_id_buf=torch.zeros((max_bs,), dtype=torch.int64),
+                verified_id_buf=torch.zeros((max_bs,), dtype=torch.int32),
                 prefix_lens_buf=torch.zeros((max_bs,), dtype=torch.int64),
                 req_pool_indices=torch.zeros((max_bs,), dtype=torch.int64),
                 # Stage 2 outputs (also Stage 3 input via block_ids_buf)
@@ -111,7 +109,6 @@ class DFlashPreDraftCudaGraphRunner():
         num_tokens = bs * self.block_size
         target_hidden_buf = b.target_hidden_buf[:num_tokens]
         commit_lens_buf = b.commit_lens_buf[:bs]
-        positions_buf = b.positions_buf[:num_tokens]
         verified_id_buf = b.verified_id_buf[:bs]
         prefix_lens_buf = b.prefix_lens_buf[:bs]
         req_pool_indices = b.req_pool_indices[:bs]
@@ -122,6 +119,8 @@ class DFlashPreDraftCudaGraphRunner():
         # this replay's Stage 1 reads what the previous replay's Stage 2 wrote.
         kv_cache_loc2d_buf = verify_out_cache_loc_2d_buf
         kv_cache_loc_buf = verify_out_cache_loc_2d_buf.reshape(-1)
+        # Stage 1 positions input is a view of the Stage 2 positions output (self-feed).
+        positions_buf = positions_2d_buf.reshape(-1)
 
         # GPU work:
 

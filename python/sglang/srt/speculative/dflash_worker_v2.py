@@ -1374,10 +1374,37 @@ class DFlashWorkerV2(BaseSpecWorker):
         assert self._draft_block_end_buf is not None
         assert self._draft_seq_lens_cpu_buf is not None
 
-        block_ids = self._draft_block_ids_buf[:bs]
+        # Block-prep outputs (block_ids / positions / verify cache loc). On the
+        # graph path these ARE the pre-draft runner's already-shared static
+        # buffers, so the captured replay's writes land where every downstream
+        # consumer reads. On the eager path they fall back to the worker-local
+        # buffers filled by the eager Stage 2 below.
+        if self._predraft_cuda_graph is not None:
+            graph_buffers = self._predraft_cuda_graph.buffers
+            block_ids = graph_buffers.block_ids_buf[:bs]
+        else:
+            block_ids = self._draft_block_ids_buf[:bs]
         prefix_lens = model_worker_batch.seq_lens
-        positions_2d = self._draft_block_positions_buf[:bs]
-        verify_out_cache_loc_2d = self._draft_verify_out_cache_loc_buf[:bs]
+        # Write prefix_lens (the committed seq lengths) into the pre-draft graph's
+        # static buffer so Stage 2 reads it with no copy. Reassign so every
+        # downstream use points at the shared storage. None on the eager path.
+        if self._predraft_cuda_graph is not None:
+            prefix_lens = self._predraft_cuda_graph.buffers.prefix_lens_buf[:bs].copy_(
+                prefix_lens
+            )
+        # Likewise feed req_pool_indices into the graph's static buffer. Only the
+        # graph's Stage 2 reads the static copy; eager sites keep using
+        # model_worker_batch.req_pool_indices, so no local reassignment is needed.
+        if self._predraft_cuda_graph is not None:
+            self._predraft_cuda_graph.buffers.req_pool_indices[:bs].copy_(
+                model_worker_batch.req_pool_indices
+            )
+        if self._predraft_cuda_graph is not None:
+            positions_2d = graph_buffers.positions_2d_buf[:bs]
+            verify_out_cache_loc_2d = graph_buffers.verify_out_cache_loc_2d_buf[:bs]
+        else:
+            positions_2d = self._draft_block_positions_buf[:bs]
+            verify_out_cache_loc_2d = self._draft_verify_out_cache_loc_buf[:bs]
         # TODO (jonahbernard) should I do target_hidden_buf = draft_input.hidden_states[:bs]
         # TODO (jonahbernard) should I do kv_cache_loc_buf = draft_input.kv_cache_loc_buf[:bs]
         # TODO (jonahbernard) should I do kv_cache_loc2d_buf = draft_input.kv_cache_loc_buf[:bs]
@@ -1385,14 +1412,7 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         # jonahbernard INSERTED THIS CODE
 
-        DFlashPreDraftCudaGraphRunner.replay(raw_bs=bs, target_hidden_buf=draft_input.hidden_states, kv_cache_loc_buf=kv_cache_loc_buf, kv_cache_loc2d_buf=kv_cache_loc2d_buf,
-    commit_lens_buf=carried_commit_lens, verified_id_buf=draft_input.verified_id, prefix_lens_buf=prefix_lens, req_pool_indices=model_worker_batch.req_pool_indices, block_ids_buf=block_ids, positions_2d_buf=positions_2d,
-    verify_out_cache_loc_2d_buf=verify_out_cache_loc_2d, mask_token_id=self._mask_token_id,
-            draft_block_ids_buf=self._draft_block_ids_buf, draft_block_positions_buf=self._draft_block_positions_buf,
-        draft_block_tokens_buf=self._draft_block_tokens_buf, draft_verify_out_cache_loc_buf=self._draft_verify_out_cache_loc_buf,
-        draft_block_end_buf=self._draft_block_end_buf,
-        draft_seq_lens_cpu_buf=self._draft_seq_lens_cpu_buf
-        )
+        self._predraft_cuda_graph.replay(raw_bs=bs)
 
 
         # jonahbernard INSERTED THIS CODE
@@ -1623,6 +1643,13 @@ class DFlashWorkerV2(BaseSpecWorker):
             if self._predraft_cuda_graph is not None
             else None
         )
+        # Same write-through for the bonus token (Stage 2's verified_id input). int32
+        # to match the accept/bonus kernel output and the carried draft-input form.
+        verified_id_buf = (
+            self._predraft_cuda_graph.buffers.verified_id_buf[:bs]
+            if self._predraft_cuda_graph is not None
+            else None
+        )
         if (
             sampling_info is not None
             and not sampling_info.is_all_greedy
@@ -1635,6 +1662,8 @@ class DFlashWorkerV2(BaseSpecWorker):
                 max_top_k=draft_input.max_top_k,
                 uniform_top_k_value=draft_input.uniform_top_k_value,
             )
+            if verified_id_buf is not None:
+                bonus = verified_id_buf.copy_(bonus)
             commit_lens = self._commit_lens_from_accept(accept_len, commit_lens_buf)  # [bs]
             out_tokens = torch.empty(
                 (bs, int(self.block_size)), dtype=torch.int64, device=device
@@ -1658,6 +1687,8 @@ class DFlashWorkerV2(BaseSpecWorker):
                     ) = self._next_accept_bonus_buffers(bs)
                     if commit_lens_buf is not None:
                         commit_lens = commit_lens_buf
+                    if verified_id_buf is not None:
+                        bonus = verified_id_buf
                     _compute_dflash_accept_bonus_triton_unchecked(
                         candidates=candidates,
                         target_top1=target_predict,
@@ -1678,6 +1709,8 @@ class DFlashWorkerV2(BaseSpecWorker):
                         candidates=candidates,
                         target_predict=target_predict,
                     )
+                    if verified_id_buf is not None:
+                        bonus = verified_id_buf.copy_(bonus)
                     commit_lens = self._commit_lens_from_accept(accept_len, commit_lens_buf)  # [bs]
                     out_tokens = torch.empty(
                         (bs, int(self.block_size)),
@@ -1697,6 +1730,8 @@ class DFlashWorkerV2(BaseSpecWorker):
                     candidates=candidates,
                     target_predict=target_predict,
                 )
+                if verified_id_buf is not None:
+                    bonus = verified_id_buf.copy_(bonus)
                 commit_lens = self._commit_lens_from_accept(accept_len, commit_lens_buf)  # [bs]
                 out_tokens = torch.empty(
                     (bs, int(self.block_size)), dtype=torch.int64, device=device
