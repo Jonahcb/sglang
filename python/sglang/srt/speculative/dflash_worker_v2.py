@@ -300,8 +300,8 @@ class DFlashWorkerV2(BaseSpecWorker):
         )
 
     def init_backends(self):
-        disable_cuda_graph = False
-        if is_cuda() and not self.server_args.disable_cuda_graph:
+        disable_cuda_graph = self.server_args.disable_cuda_graph
+        if (is_cuda() or is_hip()) and not disable_cuda_graph:
             available_mem = get_available_gpu_memory(self.device, self.gpu_id)
             disable_cuda_graph = available_mem < 1.0
             if disable_cuda_graph:
@@ -1392,6 +1392,15 @@ class DFlashWorkerV2(BaseSpecWorker):
         if self._predraft_cuda_graph is not None:
             self._predraft_cuda_graph.buffers.req_pool_indices[:bs].copy_(
                 model_worker_batch.req_pool_indices
+            )
+        # And feed this step's bonus token (Stage 2's verified_id input) into the
+        # static buffer. The verify-time write-through holds the PREVIOUS step's
+        # batch order; continuous batching reorders/resizes rows between steps, so
+        # without this refresh the upper rows of a grown batch replay stale
+        # bonuses. draft_input.verified_id is reordered through filter/merge_batch.
+        if self._predraft_cuda_graph is not None:
+            self._predraft_cuda_graph.buffers.verified_id_buf[:bs].copy_(
+                draft_input.verified_id
             )
         if self._predraft_cuda_graph is not None:
             positions_2d = graph_buffers.positions_2d_buf[:bs]
