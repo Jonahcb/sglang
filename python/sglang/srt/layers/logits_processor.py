@@ -138,6 +138,7 @@ class LogitsMetadata:
     forward_mode: ForwardMode
     capture_hidden_mode: CaptureHiddenMode = CaptureHiddenMode.NULL
     next_token_logits_buffer: Optional[torch.Tensor] = None
+    target_hidden_buf: Optional[torch.Tensor] = None
 
     extend_return_logprob: bool = False
     extend_return_top_logprob: bool = False
@@ -205,6 +206,7 @@ class LogitsMetadata:
             forward_mode=forward_batch.forward_mode,
             capture_hidden_mode=forward_batch.capture_hidden_mode,
             next_token_logits_buffer=forward_batch.next_token_logits_buffer,
+            target_hidden_buf=forward_batch.target_hidden_buf,
             extend_return_logprob=extend_return_logprob,
             extend_return_top_logprob=extend_return_top_logprob,
             extend_token_ids_logprob=extend_token_ids_logprob,
@@ -599,7 +601,14 @@ class LogitsProcessor(nn.Module):
         if logits_metadata.capture_hidden_mode.need_capture():
             if logits_metadata.capture_hidden_mode.is_full():
                 if aux_hidden_states is not None:
-                    aux_hidden_states = torch.cat(aux_hidden_states, dim=-1)
+                    if logits_metadata.target_hidden_buf is not None:
+                        aux_hidden_states = torch.cat(
+                            aux_hidden_states,
+                            dim=-1,
+                            out=logits_metadata.target_hidden_buf,
+                        )
+                    else:
+                        aux_hidden_states = torch.cat(aux_hidden_states, dim=-1)
                     hidden_states_to_store = aux_hidden_states
                 else:
                     hidden_states_to_store = hidden_states

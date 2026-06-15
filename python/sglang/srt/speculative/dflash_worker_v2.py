@@ -1154,6 +1154,17 @@ class DFlashWorkerV2(BaseSpecWorker):
             self._new_seq_lens_bufs[slot][:bs],
         )
 
+    @staticmethod
+    def _commit_lens_from_accept(
+        accept_len: torch.Tensor, commit_lens_buf: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        # commit_lens = accept_len + 1. When a static graph buffer is supplied,
+        # write into it (out=) so the pre-draft graph reads it with no copy.
+        accept_len = accept_len.to(torch.int32)
+        if commit_lens_buf is not None:
+            return torch.add(accept_len, 1, out=commit_lens_buf)
+        return accept_len + 1
+
     def _validate_phase1_sampling_support(
         self, model_worker_batch: ScheduleBatch
     ) -> None:
@@ -1604,6 +1615,14 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         candidates = draft_tokens
         new_seq_lens = None
+        # Write commit_lens straight into the pre-draft graph's static buffer so the
+        # next step's Stage-1 KV materialization reads it with no D2D copy. None on
+        # the eager path (no graph), where commit_lens is a fresh tensor instead.
+        commit_lens_buf = (
+            self._predraft_cuda_graph.buffers.commit_lens_buf[:bs]
+            if self._predraft_cuda_graph is not None
+            else None
+        )
         if (
             sampling_info is not None
             and not sampling_info.is_all_greedy
@@ -1616,7 +1635,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                 max_top_k=draft_input.max_top_k,
                 uniform_top_k_value=draft_input.uniform_top_k_value,
             )
-            commit_lens = accept_len.to(torch.int32) + 1  # [bs]
+            commit_lens = self._commit_lens_from_accept(accept_len, commit_lens_buf)  # [bs]
             out_tokens = torch.empty(
                 (bs, int(self.block_size)), dtype=torch.int64, device=device
             )
@@ -1637,6 +1656,8 @@ class DFlashWorkerV2(BaseSpecWorker):
                         out_tokens,
                         new_seq_lens,
                     ) = self._next_accept_bonus_buffers(bs)
+                    if commit_lens_buf is not None:
+                        commit_lens = commit_lens_buf
                     _compute_dflash_accept_bonus_triton_unchecked(
                         candidates=candidates,
                         target_top1=target_predict,
@@ -1657,7 +1678,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                         candidates=candidates,
                         target_predict=target_predict,
                     )
-                    commit_lens = accept_len.to(torch.int32) + 1  # [bs]
+                    commit_lens = self._commit_lens_from_accept(accept_len, commit_lens_buf)  # [bs]
                     out_tokens = torch.empty(
                         (bs, int(self.block_size)),
                         dtype=torch.int64,
@@ -1676,7 +1697,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                     candidates=candidates,
                     target_predict=target_predict,
                 )
-                commit_lens = accept_len.to(torch.int32) + 1  # [bs]
+                commit_lens = self._commit_lens_from_accept(accept_len, commit_lens_buf)  # [bs]
                 out_tokens = torch.empty(
                     (bs, int(self.block_size)), dtype=torch.int64, device=device
                 )
