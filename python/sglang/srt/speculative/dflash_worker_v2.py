@@ -1211,7 +1211,6 @@ class DFlashWorkerV2(BaseSpecWorker):
         new_seq_lens: torch.Tensor,
         verify_done: Optional[torch.cuda.Event] = None,
         cur_allocated_seq_lens_cpu: Optional[torch.Tensor] = None,
-        carried_hidden_states: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
     ) -> DFlashDraftInputV2:
         bs = int(new_seq_lens.numel())
         device = verified_id.device
@@ -1220,7 +1219,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             topk_index=torch.empty((bs, 0), device=device, dtype=torch.int64),
             verified_id=verified_id.to(dtype=torch.int32),
             new_seq_lens=new_seq_lens.to(dtype=torch.int64),
-            hidden_states=carried_hidden_states, # TODO (jonahbernard): we may have suprised downstream consumers of this so check everything
+            hidden_states=torch.empty((bs, 0), device=device, dtype=torch.float16),
             verify_done=verify_done,
             cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
         )
@@ -1786,7 +1785,6 @@ class DFlashWorkerV2(BaseSpecWorker):
             verified_id=bonus,
             new_seq_lens=new_seq_lens,
             cur_allocated_seq_lens_cpu=draft_input.reserved_seq_lens_cpu,
-            carried_hidden_states=logits_output.hidden_states,
         )
         verify_done = torch.get_device_module(device).Event()
         verify_done.record()
