@@ -108,10 +108,15 @@ class DecodeInputBuffers(ForwardInputBuffers):
         ne_token_table: Optional[torch.Tensor] = None,
         is_hybrid_swa: bool = False,
         hc_hidden_size: Optional[int] = None,
+        aux_hidden_size: Optional[int] = None,
     ) -> DecodeInputBuffers:
         with torch.device(device):
-            # TODO (jonahbernard) Claude thinks it should be aux_hidden_size instead of hidden_size. Figure that out later.
-            target_hidden_buf = torch.zeros((max_num_token, hidden_size), dtype=dtype)
+            # DFlash captures concatenated target-layer hiddens (the wide aux
+            # width), so size the buffer to aux_hidden_size when aux is active;
+            # otherwise fall back to plain hidden_size.
+            target_hidden_buf = torch.zeros(
+                (max_num_token, aux_hidden_size or hidden_size), dtype=dtype
+            )
 
             input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
             input_embeds = torch.zeros((max_num_token, hidden_size), dtype=dtype)

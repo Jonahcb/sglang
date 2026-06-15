@@ -447,6 +447,13 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             hc_hidden_size=getattr(
                 self.model_runner.model_config, "hc_hidden_size", None
             ),
+            aux_hidden_size=(
+                len(self.model_runner.dflash_target_layer_ids)
+                * self.model_runner.model_config.hidden_size
+                if getattr(self.model_runner, "dflash_use_aux_hidden_state", False)
+                and not self.model_runner.is_draft_worker
+                else None
+            ),
         )
         self.buffers.share_buffers()
         # FB-shared slot registry adopting DecodeInputBuffers storage (same

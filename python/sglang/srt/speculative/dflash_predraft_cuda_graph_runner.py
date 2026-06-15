@@ -65,12 +65,22 @@ class DFlashPreDraftCudaGraphRunner():
         max_tokens = max_bs * self.block_size
         hidden_size = model_runner.model_config.hidden_size
         dtype = model_runner.dtype
+        # Stage 1 reads the target's concatenated aux hidden states (the wide
+        # aux width), which the target decode graph writes into its same-named
+        # static buffer. Match width/dtype/device so share_buffers() aliases the
+        # two onto one allocation; otherwise the sizes differ and no aliasing
+        # happens (silent copy-less divergence).
+        aux_hidden_size = (
+            len(model_runner.dflash_target_layer_ids) * hidden_size
+            if getattr(model_runner, "dflash_use_aux_hidden_state", False)
+            else hidden_size
+        )
 
         # Initialize static buffers that will be shared across pre-draft CUDA graphs, draft CUDA graphs, and target CUDA graphs
         with torch.device(model_runner.device):
             self.buffers = DFlashDraftAndVerifyInputBuffers(
                 # Stage 1 (KV materialization) inputs
-                target_hidden_buf=torch.zeros((max_tokens, hidden_size), dtype=dtype),
+                target_hidden_buf=torch.zeros((max_tokens, aux_hidden_size), dtype=dtype),
                 commit_lens_buf=torch.zeros((max_bs,), dtype=torch.int32),
                 # Stage 2 (block-prep) inputs
                 verified_id_buf=torch.zeros((max_bs,), dtype=torch.int32),
