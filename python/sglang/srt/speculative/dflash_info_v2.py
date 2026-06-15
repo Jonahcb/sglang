@@ -57,6 +57,10 @@ class DFlashDraftInputV2(SpecInput):
     reserved_seq_lens_cpu: Optional[torch.Tensor] = None
     reserved_seq_lens_sum: Optional[int] = None
     direct_carry_valid: bool = True
+    # True only for the first decode after prefill. On the pre-draft CUDA graph
+    # path this iteration has no previous Stage-2 output to self-feed Stage 1,
+    # so the worker runs the eager block-prep and skips the graph replay.
+    first_decode_step: bool = False
     _prepare_committed_kv_lens_cpu_buf: Optional[torch.Tensor] = None
     _prepare_planning_kv_lens_cpu_buf: Optional[torch.Tensor] = None
     _prepare_batch_seq_lens_cpu_buf: Optional[torch.Tensor] = None

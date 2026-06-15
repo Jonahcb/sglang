@@ -1201,6 +1201,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             hidden_states=torch.empty((bs, 0), device=device, dtype=torch.float16),
             verify_done=verify_done,
             cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
+            first_decode_step=True,
         )
 
     def _make_next_draft_input_decode(
@@ -1410,16 +1411,23 @@ class DFlashWorkerV2(BaseSpecWorker):
         # TODO (jonahbernard) should I do kv_cache_loc2d_buf = draft_input.kv_cache_loc_buf[:bs]
         # TODO (jonahbernard) I am using carried_commit_lens but I think I should be using the actual buffer (maybe this is the buffer)
 
-        # jonahbernard INSERTED THIS CODE
+        # The pre-draft graph self-feeds Stage 1 from the previous iteration's
+        # Stage 2 output, which does not exist on the first decode after prefill.
+        # So on iteration 0 (first_decode_step) skip the replay and run eager
+        # block-prep into the shared buffers, seeding iteration 1's self-feed.
+        run_predraft_graph = (
+            self._predraft_cuda_graph is not None
+            and not draft_input.first_decode_step
+        )
+        if run_predraft_graph:
+            self._predraft_cuda_graph.replay(raw_bs=bs)
 
-        self._predraft_cuda_graph.replay(raw_bs=bs)
-
-
-        # jonahbernard INSERTED THIS CODE
-
-
-
-        if self._use_triton_prepare_block:
+        if run_predraft_graph:
+            # The captured replay above already wrote block_ids / positions /
+            # verify cache loc into the shared static buffers; skip the eager
+            # Stage 2 so it does not clobber the graph output.
+            pass
+        elif self._use_triton_prepare_block:
             try:
                 _prepare_dflash_draft_block_unchecked(
                     verified_id=draft_input.verified_id.view(-1),
@@ -1766,13 +1774,17 @@ class DFlashWorkerV2(BaseSpecWorker):
             )
         hidden = hidden.view(bs, int(self.block_size), -1)
 
-        self._append_target_hidden_to_draft_kv_by_loc(
-            target_hidden=hidden.reshape(-1, hidden.shape[-1]),
-            cache_loc=verify_out_cache_loc,
-            cache_loc_2d=verify_out_cache_loc_2d,
-            positions=positions,
-            commit_lens=commit_lens,
-        )
+        if self._predraft_cuda_graph is None:
+            # On the graph path this materialization is done by the next replay's
+            # Stage 1 (self-fed from this iteration's carried loc / hidden), so
+            # running it here too would double-materialize the committed block.
+            self._append_target_hidden_to_draft_kv_by_loc(
+                target_hidden=hidden.reshape(-1, hidden.shape[-1]),
+                cache_loc=verify_out_cache_loc,
+                cache_loc_2d=verify_out_cache_loc_2d,
+                positions=positions,
+                commit_lens=commit_lens,
+            )
 
         # jonahbernard DELETE ending here =======================================================================================================================
 
