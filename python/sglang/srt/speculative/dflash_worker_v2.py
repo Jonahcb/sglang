@@ -1212,9 +1212,6 @@ class DFlashWorkerV2(BaseSpecWorker):
         verify_done: Optional[torch.cuda.Event] = None,
         cur_allocated_seq_lens_cpu: Optional[torch.Tensor] = None,
         carried_hidden_states: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
-        carried_kv_cache_loc_buf: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
-        carried_kv_cache_loc_2d_buf: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
-        carried_commit_lens: Optional[torch.Tensor] = None, # TODO (jonahbernard): I set this to optional for the eager case, check if correct
     ) -> DFlashDraftInputV2:
         bs = int(new_seq_lens.numel())
         device = verified_id.device
@@ -1226,9 +1223,6 @@ class DFlashWorkerV2(BaseSpecWorker):
             hidden_states=carried_hidden_states, # TODO (jonahbernard): we may have suprised downstream consumers of this so check everything
             verify_done=verify_done,
             cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
-            carried_kv_cache_loc_buf=carried_kv_cache_loc_buf,
-            carried_kv_cache_loc_2d_buf=carried_kv_cache_loc_2d_buf,
-            carried_commit_lens=carried_commit_lens,
         )
 
     def forward_batch_generation(
@@ -1793,9 +1787,6 @@ class DFlashWorkerV2(BaseSpecWorker):
             new_seq_lens=new_seq_lens,
             cur_allocated_seq_lens_cpu=draft_input.reserved_seq_lens_cpu,
             carried_hidden_states=logits_output.hidden_states,
-            carried_kv_cache_loc_buf=verify_out_cache_loc,
-            carried_kv_cache_loc_2d_buf=verify_out_cache_loc_2d,
-            carried_commit_lens=commit_lens
         )
         verify_done = torch.get_device_module(device).Event()
         verify_done.record()
