@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 import torch
 
+from sglang.srt.model_executor.cuda_graph_buffer_registry import (
+    _grouped_foreach_copy_,
+)
 from sglang.srt.model_executor.input_buffers import ForwardInputBuffers
 from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     BaseCudaGraphRunner,
@@ -25,13 +28,20 @@ class DFlashDraftAndVerifyInputBuffers(ForwardInputBuffers):
     verified_id_buf: torch.Tensor
     prefix_lens_buf: torch.Tensor
     req_pool_indices: torch.Tensor
-    # Stage 2 outputs (also Stage 3 input via block_ids_buf)
-    block_ids_buf: torch.Tensor
-    positions_2d_buf: torch.Tensor
-    verify_out_cache_loc_2d_buf: torch.Tensor
+    # Stage 2 outputs (also Stage 3 input via input_ids). `input_ids`, `positions`
+    # and `out_cache_loc` are named to match the draft decode and target verify
+    # graphs' same-named static buffers so share_buffers() aliases all three onto
+    # one allocation (same numel/dtype/device) -> the predraft writes land where
+    # the draft/target replays read, with no per-step copy. Shaped 2D here but the
+    # aliased draft/target buffers are the 1D (flat) view of the same storage.
+    input_ids: torch.Tensor
+    positions: torch.Tensor
+    out_cache_loc: torch.Tensor
     # Stage 3 output: embeddings of the block ids, written every replay so the
-    # worker reads them with no eager re-embed.
-    input_embeds_buf: torch.Tensor
+    # worker reads them with no eager re-embed. Named to match the draft decode
+    # graph's `input_embeds` field so share_buffers() aliases the two onto one
+    # allocation (same numel/dtype/device) -> zero-copy hand-off to the draft.
+    input_embeds: torch.Tensor
 
 
 class DFlashPreDraftCudaGraphRunner():
@@ -86,24 +96,29 @@ class DFlashPreDraftCudaGraphRunner():
                 target_hidden_buf=torch.zeros((max_tokens, aux_hidden_size), dtype=dtype),
                 commit_lens_buf=torch.zeros((max_bs,), dtype=torch.int32),
                 # Stage 2 (block-prep) inputs
-                verified_id_buf=torch.zeros((max_bs,), dtype=torch.int32),
+                verified_id_buf=torch.zeros((max_bs,), dtype=torch.int64),
                 prefix_lens_buf=torch.zeros((max_bs,), dtype=torch.int64),
                 req_pool_indices=torch.zeros((max_bs,), dtype=torch.int64),
-                # Stage 2 outputs (also Stage 3 input via block_ids_buf)
-                block_ids_buf=torch.zeros((max_bs, self.block_size), dtype=torch.int64),
-                positions_2d_buf=torch.zeros(
-                    (max_bs, self.block_size), dtype=torch.int64
-                ),
-                verify_out_cache_loc_2d_buf=torch.zeros(
+                # Stage 2 outputs (also Stage 3 input via input_ids)
+                input_ids=torch.zeros((max_bs, self.block_size), dtype=torch.int64),
+                positions=torch.zeros((max_bs, self.block_size), dtype=torch.int64),
+                out_cache_loc=torch.zeros(
                     (max_bs, self.block_size), dtype=torch.int64
                 ),
                 # Stage 3 output: per-token embeddings (block_size tokens per req).
-                input_embeds_buf=torch.zeros((max_tokens, hidden_size), dtype=dtype),
+                input_embeds=torch.zeros((max_tokens, hidden_size), dtype=dtype),
             )
 
         # Alias matching buffers onto the shared process-wide pool so the
         # pre-draft, draft, and target graphs read/write the same storage.
         self.buffers.share_buffers()
+
+        # Flat (1D) views of the block-prep outputs, taken once after aliasing so
+        # they point at the canonical shared storage. The draft ForwardBatch and
+        # target verify consume the flat layout; precomputing the views here lets
+        # the worker read them per step with no per-step reshape.
+        self.positions_flat = self.buffers.positions.view(-1)
+        self.out_cache_loc_flat = self.buffers.out_cache_loc.view(-1)
 
         # Capture the graphs
         self.capture()
@@ -127,10 +142,10 @@ class DFlashPreDraftCudaGraphRunner():
         verified_id_buf = b.verified_id_buf[:bs]
         prefix_lens_buf = b.prefix_lens_buf[:bs]
         req_pool_indices = b.req_pool_indices[:bs]
-        block_ids_buf = b.block_ids_buf[:bs]
-        positions_2d_buf = b.positions_2d_buf[:bs]
-        verify_out_cache_loc_2d_buf = b.verify_out_cache_loc_2d_buf[:bs]
-        input_embeds_buf = b.input_embeds_buf[:num_tokens]
+        block_ids_buf = b.input_ids[:bs]
+        positions_2d_buf = b.positions[:bs]
+        verify_out_cache_loc_2d_buf = b.out_cache_loc[:bs]
+        input_embeds = b.input_embeds[:num_tokens]
         # Stage 1 loc inputs are views of the Stage 2 loc output (self-feed):
         # this replay's Stage 1 reads what the previous replay's Stage 2 wrote.
         kv_cache_loc2d_buf = verify_out_cache_loc_2d_buf
@@ -171,7 +186,7 @@ class DFlashPreDraftCudaGraphRunner():
             # 3) embed bonus + mask tokens into the static output buffer so the
             # worker reads it after replay with no eager re-embed.
             noise_embedding = self.embed_module(block_ids_buf)
-            input_embeds_buf.copy_(noise_embedding.view(-1, noise_embedding.shape[-1]))
+            input_embeds.copy_(noise_embedding.view(-1, noise_embedding.shape[-1]))
 
         # insert warmup run
         # TODO (jonahbernard): make this whole more true to FullCudaGraphRunner once we expand functionality to tp
@@ -190,6 +205,20 @@ class DFlashPreDraftCudaGraphRunner():
 
 
     
+    def replay_prepare(self, raw_bs, prefix_lens, req_pool_indices, verified_id):
+        # Write this step's Stage 2 inputs into the shared static buffers in one
+        # grouped foreach copy, instead of three scattered .copy_() calls in the
+        # worker. Returns the prefix_lens slot slice so the worker keeps pointing
+        # downstream uses at the shared storage.
+        prefix_lens_dst = self.buffers.prefix_lens_buf[:raw_bs]
+        req_pool_indices_dst = self.buffers.req_pool_indices[:raw_bs]
+        verified_id_dst = self.buffers.verified_id_buf[:raw_bs]
+        _grouped_foreach_copy_(
+            [prefix_lens_dst, req_pool_indices_dst, verified_id_dst],
+            [prefix_lens, req_pool_indices, verified_id],
+        )
+        return prefix_lens_dst
+
     def replay(self, raw_bs):
         # Pad to nearest captured shape
         bs = BaseCudaGraphRunner._pad_to_bucket(raw_bs, self.capture_bs)

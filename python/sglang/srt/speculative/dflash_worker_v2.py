@@ -1124,7 +1124,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             torch.empty((new_cap,), dtype=torch.int32, device=device) for _ in range(2)
         ]
         self._bonus_id_bufs = [
-            torch.empty((new_cap,), dtype=torch.int32, device=device) for _ in range(2)
+            torch.empty((new_cap,), dtype=torch.int64, device=device) for _ in range(2)
         ]
         self._out_tokens_bufs = [
             torch.empty((new_cap, block_size), dtype=torch.int64, device=device)
@@ -1196,7 +1196,7 @@ class DFlashWorkerV2(BaseSpecWorker):
         return DFlashDraftInputV2(
             topk_p=torch.empty((bs, 0), device=device, dtype=torch.float32),
             topk_index=torch.empty((bs, 0), device=device, dtype=torch.int64),
-            verified_id=verified_id.to(dtype=torch.int32),
+            verified_id=verified_id.to(dtype=torch.int64),
             new_seq_lens=seq_lens.to(dtype=torch.int64),
             hidden_states=torch.empty((bs, 0), device=device, dtype=torch.float16),
             verify_done=verify_done,
@@ -1217,7 +1217,7 @@ class DFlashWorkerV2(BaseSpecWorker):
         return DFlashDraftInputV2(
             topk_p=torch.empty((bs, 0), device=device, dtype=torch.float32),
             topk_index=torch.empty((bs, 0), device=device, dtype=torch.int64),
-            verified_id=verified_id.to(dtype=torch.int32),
+            verified_id=verified_id.to(dtype=torch.int64),
             new_seq_lens=new_seq_lens.to(dtype=torch.int64),
             hidden_states=torch.empty((bs, 0), device=device, dtype=torch.float16),
             verify_done=verify_done,
@@ -1323,7 +1323,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             empty_ids = torch.empty((0,), dtype=torch.int64, device=self.device)
             empty_lens = torch.empty((0,), dtype=torch.int32, device=self.device)
             next_draft_input = self._make_next_draft_input_decode(
-                verified_id=torch.empty((0,), device=self.device, dtype=torch.int32),
+                verified_id=torch.empty((0,), device=self.device, dtype=torch.int64),
                 new_seq_lens=torch.empty((0,), device=self.device, dtype=torch.int64),
             )
             if on_publish is not None:
@@ -1375,36 +1375,29 @@ class DFlashWorkerV2(BaseSpecWorker):
         # buffers filled by the eager Stage 2 below.
         if self._predraft_cuda_graph is not None:
             graph_buffers = self._predraft_cuda_graph.buffers
-            block_ids = graph_buffers.block_ids_buf[:bs]
+            block_ids = graph_buffers.input_ids[:bs]
         else:
             block_ids = self._draft_block_ids_buf[:bs]
         prefix_lens = model_worker_batch.seq_lens
-        # Write prefix_lens (the committed seq lengths) into the pre-draft graph's
-        # static buffer so Stage 2 reads it with no copy. Reassign so every
-        # downstream use points at the shared storage. None on the eager path.
+        # Write this step's Stage 2 inputs (prefix_lens, req_pool_indices, and the
+        # bonus token verified_id) into the pre-draft graph's static buffers in one
+        # grouped copy so Stage 2 reads them with no per-tensor copy. prefix_lens is
+        # reassigned to the slot slice so every downstream use points at the shared
+        # storage. req_pool_indices / verified_id are only read by the graph, so no
+        # local reassignment is needed; eager sites keep using the batch tensors.
+        # The verify-time write-through holds the PREVIOUS step's batch order;
+        # continuous batching reorders/resizes rows between steps, so this refresh
+        # avoids replaying stale upper rows on a grown batch. None on the eager path.
         if self._predraft_cuda_graph is not None:
-            prefix_lens = self._predraft_cuda_graph.buffers.prefix_lens_buf[:bs].copy_(
-                prefix_lens
-            )
-        # Likewise feed req_pool_indices into the graph's static buffer. Only the
-        # graph's Stage 2 reads the static copy; eager sites keep using
-        # model_worker_batch.req_pool_indices, so no local reassignment is needed.
-        if self._predraft_cuda_graph is not None:
-            self._predraft_cuda_graph.buffers.req_pool_indices[:bs].copy_(
-                model_worker_batch.req_pool_indices
-            )
-        # And feed this step's bonus token (Stage 2's verified_id input) into the
-        # static buffer. The verify-time write-through holds the PREVIOUS step's
-        # batch order; continuous batching reorders/resizes rows between steps, so
-        # without this refresh the upper rows of a grown batch replay stale
-        # bonuses. draft_input.verified_id is reordered through filter/merge_batch.
-        if self._predraft_cuda_graph is not None:
-            self._predraft_cuda_graph.buffers.verified_id_buf[:bs].copy_(
-                draft_input.verified_id
+            prefix_lens = self._predraft_cuda_graph.replay_prepare(
+                raw_bs=bs,
+                prefix_lens=prefix_lens,
+                req_pool_indices=model_worker_batch.req_pool_indices,
+                verified_id=draft_input.verified_id,
             )
         if self._predraft_cuda_graph is not None:
-            positions_2d = graph_buffers.positions_2d_buf[:bs]
-            verify_out_cache_loc_2d = graph_buffers.verify_out_cache_loc_2d_buf[:bs]
+            positions_2d = graph_buffers.positions[:bs]
+            verify_out_cache_loc_2d = graph_buffers.out_cache_loc[:bs]
         else:
             positions_2d = self._draft_block_positions_buf[:bs]
             verify_out_cache_loc_2d = self._draft_verify_out_cache_loc_buf[:bs]
@@ -1487,16 +1480,27 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         if run_predraft_graph:
             # Stage 3 of the captured replay already embedded block_ids into the
-            # shared static buffer; read it instead of re-embedding eagerly.
-            input_embeds = self._predraft_cuda_graph.buffers.input_embeds_buf[
-                : bs * block_size
-            ]
+            # predraft static buffer, which is aliased onto the draft decode
+            # graph's `input_embeds` slot. The draft graph reads its own buffer,
+            # so nothing is handed across the ForwardBatch. Requires the predraft
+            # graph to run iff the draft decode graph runs.
+            input_embeds = None
+            pass
         else:
             noise_embedding = embed_module(block_ids)
             input_embeds = noise_embedding.view(-1, noise_embedding.shape[-1])
 
-        positions = positions_2d.reshape(-1)
-        verify_out_cache_loc = verify_out_cache_loc_2d.reshape(-1)
+        if run_predraft_graph:
+            # All 3 graphs (predraft/draft/target) alias these onto one shared
+            # static allocation via share_buffers(); the flat views are taken
+            # once over that storage, so the hot path needs no reshape/slice/copy.
+            positions = self._predraft_cuda_graph.positions_flat[: bs * block_size]
+            verify_out_cache_loc = self._predraft_cuda_graph.out_cache_loc_flat[
+                : bs * block_size
+            ]
+        else:
+            positions = positions_2d.reshape(-1)
+            verify_out_cache_loc = verify_out_cache_loc_2d.reshape(-1)
 
         seq_lens_cpu = self._draft_seq_lens_cpu_buf[:bs]
         if self.use_compact_draft_cache:
@@ -1660,8 +1664,9 @@ class DFlashWorkerV2(BaseSpecWorker):
             if self._predraft_cuda_graph is not None
             else None
         )
-        # Same write-through for the bonus token (Stage 2's verified_id input). int32
-        # to match the accept/bonus kernel output and the carried draft-input form.
+        # Same write-through for the bonus token (Stage 2's verified_id input). int64
+        # to match the accept/bonus kernel output and the carried draft-input form, so
+        # it groups with prefix_lens / req_pool_indices into one foreach copy.
         verified_id_buf = (
             self._predraft_cuda_graph.buffers.verified_id_buf[:bs]
             if self._predraft_cuda_graph is not None

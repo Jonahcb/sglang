@@ -477,6 +477,12 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             source=self.buffers,
         )
 
+        if self.model_runner.is_draft_worker:
+            self.buffer_registry.get_slot("input_ids").copy_from_fb = False
+            self.buffer_registry.get_slot("positions").copy_from_fb = False
+            self.buffer_registry.get_slot("out_cache_loc").copy_from_fb = False
+            self.buffer_registry.get_slot("req_pool_indices").copy_from_fb = False
+
         # --- backend ---------------------------------------------------
         self.backend = resolve_decode_backend(self)
 
